@@ -7,12 +7,16 @@ if [ $# -lt 1 ]; then
 fi
 
 DEPENDENCIES_FILE=$1
+OUTPUT_FILE="last_downloaded_versions.txt" 
 
 # Vérifie que le fichier d'entrée existe
 if [ ! -f "$DEPENDENCIES_FILE" ]; then
   echo "Le fichier $DEPENDENCIES_FILE n'existe pas."
   exit 1
 fi
+
+# Efface le fichier de sortie s'il existe déjà
+> "$OUTPUT_FILE"
 
 # Fonction pour installer et traiter les versions d'une dépendance
 process_package_versions() {
@@ -32,16 +36,21 @@ process_package_versions() {
 
   # Extraire les versions valides au format x.y.z
   local versions
-  versions=$(echo "$package_metadata" | jq -r '.versions | keys[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$')
+  versions=$(echo "$package_metadata" | jq -r '.versions | keys[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
 
   if [[ -z "$versions" ]]; then
     echo "Aucune version valide trouvée pour $package_name"
     return 1
   fi
 
-  echo "Versions trouvées pour $package_name : $versions"
+  echo "Versions trouvées pour $package_name (triées) :"
+  echo "$versions"
+
+  # Nettoyer le cache npm avant les installations
+  npm cache clean --force
 
   # Traiter chaque version
+  local last_version=""
   for version in $versions; do
     echo "Installation de $package_name@$version..."
 
@@ -56,10 +65,13 @@ process_package_versions() {
     fi
 
     echo "Installation réussie : $package_name@$version"
-
-    # Nettoyer le cache npm après chaque installation
-    npm cache clean --force
+    last_version="$version"
   done
+
+  # Enregistrer la dernière version dans le fichier
+  if [[ -n "$last_version" ]]; then
+    echo "$package_name@$last_version" >> "$OUTPUT_FILE"
+  fi
 }
 
 # Configure npm pour utiliser le registre local
@@ -82,28 +94,4 @@ done < "$DEPENDENCIES_FILE"
 npm set registry "$OLD_REGISTRY"
 
 echo "Traitement terminé pour toutes les dépendances."
-
-# Génération du fichier de liste des nouveaux fichiers dans verdaccio/storage
-
-# Création du dossier deps_list s'il n'existe pas
-mkdir -p deps_list
-
-# Nom du fichier avec timestamp
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-NEW_FILE="deps_list/deps_$TIMESTAMP.txt"
-
-# Trouver tous les fichiers dans verdaccio/storage
-ALL_FILES=$(mktemp)
-find verdaccio/storage/ -type f > "$ALL_FILES"
-
-# Fusionner les fichiers existants dans deps_list pour les exclure
-EXISTING_FILES=$(mktemp)
-cat deps_list/deps_*.txt > "$EXISTING_FILES" 2>/dev/null
-
-# Filtrer les fichiers nouveaux
-grep -Fxv -f "$EXISTING_FILES" "$ALL_FILES" > "$NEW_FILE"
-
-# Nettoyer les fichiers temporaires
-rm -f "$ALL_FILES" "$EXISTING_FILES"
-
-echo "Nouvelle liste des fichiers créée : $NEW_FILE"
+echo "Dernières versions téléchargées enregistrées dans $OUTPUT_FILE"
