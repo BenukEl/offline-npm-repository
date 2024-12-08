@@ -1,76 +1,123 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Vérifie que le fichier d'entrée est fourni
-if [ $# -lt 1 ]; then
+# Exit immediately if a command exits with a non-zero status,
+# treat unset variables as errors, and propagate errors in pipelines.
+set -euo pipefail
+
+# Trap to always restore original npm registry even if an error occurs.
+trap 'restore_registry' EXIT
+
+# Print usage message and exit.
+usage() {
   echo "Usage: $0 dependencies_file"
   exit 1
-fi
+}
 
-DEPENDENCIES_FILE=$1
-OUTPUT_FILE="last_downloaded_versions.txt"
+# Check if a given command is available.
+check_command() {
+  local cmd="$1"
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: '$cmd' is required but not installed or not in PATH." >&2
+    exit 1
+  fi
+}
 
-# Vérifie que le fichier d'entrée existe
-if [ ! -f "$DEPENDENCIES_FILE" ]; then
-  echo "Le fichier $DEPENDENCIES_FILE n'existe pas."
-  exit 1
-fi
+# Check the input file.
+validate_input_file() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "Error: The file '$file' does not exist." >&2
+    exit 1
+  fi
+}
 
-# Crée le fichier des dernières versions téléchargées s'il n'existe pas
-if [ ! -f "$OUTPUT_FILE" ]; then
-  touch "$OUTPUT_FILE"
-fi
+# Initialize the output file that stores the latest downloaded versions.
+initialize_output_file() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    touch "$file"
+  fi
+}
 
-# Fonction pour encoder une dépendance pour l'URL
+# Encode a string for use in a URL.
 url_encode() {
-  local raw=$1
+  local raw="$1"
   echo -n "$raw" | jq -sRr @uri
 }
 
-# Fonction pour installer et traiter les versions d'une dépendance
+# Fetch package metadata from the npm registry.
+fetch_package_metadata() {
+  local package_name="$1"
+  curl -s "https://registry.npmjs.org/$(url_encode "$package_name")"
+}
+
+# Extract valid versions (in x.y.z format) from package metadata.
+extract_valid_versions() {
+  local metadata="$1"
+  echo "$metadata" | jq -r '.versions | keys[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V
+}
+
+# Get the last downloaded version of a given package.
+get_last_downloaded_version() {
+  local package_name="$1"
+  local output_file="$2"
+  grep "^$package_name@" "$output_file" | awk -F'@' '{print $NF}' || true
+}
+
+# Install a specific version of a given package.
+install_package_version() {
+  local package_name="$1"
+  local version="$2"
+  
+  echo "Installing $package_name@$version..."
+  npm install "$package_name@$version" --silent
+  echo "Installation successful: $package_name@$version"
+}
+
+# Update the output file with the latest downloaded version.
+update_downloaded_version() {
+  local package_name="$1"
+  local version="$2"
+  local output_file="$3"
+  
+  # Remove any existing entry for this package
+  sed -i "\|^$package_name@|d" "$output_file"
+  # Add the new version
+  echo "$package_name@$version" >> "$output_file"
+}
+
+# Process a single package by installing all newer versions.
 process_package_versions() {
-  local package_name=$1
+  local package_name="$1"
+  local output_file="$2"
 
   echo "======================================="
-  echo "Traitement du package : $package_name"
+  echo "Processing package: $package_name"
   echo "======================================="
 
-  # Encoder le nom de la dépendance pour l'utiliser dans l'URL
-  local encoded_name
-  encoded_name=$(url_encode "$package_name")
-
-  # Récupérer les métadonnées du package via npm registry
-  local package_metadata
-  package_metadata=$(curl -s "https://registry.npmjs.org/$encoded_name")
-  if [[ -z "$package_metadata" ]]; then
-    echo "Erreur : Impossible de récupérer les métadonnées pour $package_name"
+  local metadata
+  metadata=$(fetch_package_metadata "$package_name")
+  if [[ -z "$metadata" ]]; then
+    echo "Error: Unable to retrieve metadata for $package_name" >&2
     return 1
   fi
 
-  # Extraire les versions valides au format x.y.z
   local versions
-  versions=$(echo "$package_metadata" | jq -r '.versions | keys[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
-
+  versions=$(extract_valid_versions "$metadata")
   if [[ -z "$versions" ]]; then
-    echo "Aucune version valide trouvée pour $package_name"
+    echo "No valid versions found for $package_name."
     return 1
   fi
 
-  echo "Versions disponibles pour $package_name (triées) :"
-  echo "$versions"
-
-  # Trouver la dernière version téléchargée pour cette dépendance
   local last_downloaded_version
-  last_downloaded_version=$(grep "^$package_name@" "$OUTPUT_FILE" | cut -d'@' -f2)
+  last_downloaded_version=$(get_last_downloaded_version "$package_name" "$output_file")
 
-  echo "Dernière version téléchargée pour $package_name : $last_downloaded_version"
-
-  # Filtrer les versions à télécharger
   local versions_to_download
   if [[ -z "$last_downloaded_version" ]]; then
-    # Si aucune version n'a été téléchargée, télécharger toutes les versions
-    versions_to_download=$versions
+    # If no version has been downloaded before, download all versions.
+    versions_to_download="$versions"
   else
-    # Télécharger uniquement les versions supérieures à la dernière téléchargée
+    # Download only versions greater than the last downloaded version.
     versions_to_download=$(echo "$versions" | awk -v last="$last_downloaded_version" '{
       if ($0 ~ last) { seen=1; next }
       if (seen) print $0
@@ -78,62 +125,69 @@ process_package_versions() {
   fi
 
   if [[ -z "$versions_to_download" ]]; then
-    echo "Aucune nouvelle version à télécharger pour $package_name."
+    echo "No new versions to download for $package_name."
     return 0
   fi
 
-  echo "Versions à télécharger pour $package_name :"
+  echo "Versions to download for $package_name:"
   echo "$versions_to_download"
 
-  # Nettoyer le cache npm avant les installations
+  # Clean npm cache to ensure fresh installs
   npm cache clean --force
 
-  # Traiter chaque version
   local latest_version=""
   for version in $versions_to_download; do
-    echo "Installation de $package_name@$version..."
-
-    # Supprimer node_modules et installer la version
+    # Remove node_modules to ensure a clean environment
     rm -rf node_modules
-    npm install "$package_name@$version" --silent
-
-    # Vérifier si l'installation a réussi
-    if [ $? -ne 0 ]; then
-      echo "Erreur lors de l'installation de $package_name@$version"
-      continue
+    if install_package_version "$package_name" "$version"; then
+      latest_version="$version"
+    else
+      echo "Error installing $package_name@$version" >&2
     fi
-
-    echo "Installation réussie : $package_name@$version"
-    latest_version="$version"
   done
 
-  # Mettre à jour la dernière version dans le fichier
   if [[ -n "$latest_version" ]]; then
-    # Supprimer l'entrée existante pour ce package
-    sed -i "/^$package_name@/d" "$OUTPUT_FILE"
-    # Ajouter la nouvelle version
-    echo "$package_name@$latest_version" >> "$OUTPUT_FILE"
+    update_downloaded_version "$package_name" "$latest_version" "$output_file"
   fi
 }
 
-# Configure npm pour utiliser le registre local
-# Ancien registry: https://registry.npmjs.org/
-OLD_REGISTRY=$(npm get registry)
-npm set registry http://localhost:4873
+# Restore the old npm registry.
+restore_registry() {
+  if [[ -n "${OLD_REGISTRY:-}" ]]; then
+    npm set registry "$OLD_REGISTRY"
+  fi
+}
 
-# Lire le fichier d'entrée et traiter chaque dépendance
-while IFS= read -r dependency; do
-  # Ignore les lignes vides ou commentaires
-  if [[ -z "$dependency" || "$dependency" == \#* ]]; then
-    continue
+main() {
+  if [[ $# -lt 1 ]]; then
+    usage
   fi
 
-  # Appeler la fonction pour traiter le package
-  process_package_versions "$dependency"
-done < "$DEPENDENCIES_FILE"
+  local dependencies_file=$1
+  local output_file="last_downloaded_versions.txt"
 
-# Restaurer l'ancien registre npm
-npm set registry "$OLD_REGISTRY"
+  # Check required commands
+  check_command "jq"
+  check_command "curl"
+  check_command "npm"
 
-echo "Traitement terminé pour toutes les dépendances."
-echo "Les dernières versions téléchargées ont été mises à jour dans $OUTPUT_FILE"
+  validate_input_file "$dependencies_file"
+  initialize_output_file "$output_file"
+
+  # Store the old registry and set to local one
+  OLD_REGISTRY=$(npm get registry)
+  npm set registry http://localhost:4873
+
+  # Read dependencies line by line, ignoring empty or commented lines.
+  while IFS= read -r dependency; do
+    if [[ -z "$dependency" || "$dependency" == \#* ]]; then
+      continue
+    fi
+    process_package_versions "$dependency" "$output_file"
+  done < "$dependencies_file"
+
+  echo "Processing completed for all dependencies."
+  echo "The last downloaded versions have been updated in $output_file"
+}
+
+main "$@"
