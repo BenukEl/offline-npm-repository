@@ -137,8 +137,11 @@ process_package_versions() {
 
   local latest_version=""
   for version in $versions_to_download; do
-    # Remove node_modules to ensure a clean environment
+    # Remove node_modules and clean package.json and package-lock.json
     rm -rf node_modules
+    > package.json
+    > package-lock.json
+
     if install_package_version "$package_name" "$version"; then
       latest_version="$version"
     else
