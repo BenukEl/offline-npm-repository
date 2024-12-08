@@ -9,7 +9,11 @@ trap 'restore_registry' EXIT
 
 # Print usage message and exit.
 usage() {
-  echo "Usage: $0 dependencies_file"
+  echo "Usage: $0 [--source file|package] <dependencies_file_or_package.json>"
+  echo ""
+  echo "Options:"
+  echo "  --source file      Use a file containing one dependency per line."
+  echo "  --source package   Use dependencies listed in package.json (dependencies, devDependencies, peerDependencies)."
   exit 1
 }
 
@@ -137,10 +141,10 @@ process_package_versions() {
 
   local latest_version=""
   for version in $versions_to_download; do
-    # Remove node_modules and clean package.json and package-lock.json
+    # Remove node_modules and reset package.json and package-lock.json
     rm -rf node_modules
-    > package.json
-    > package-lock.json
+    rm -f package.json package-lock.json
+    npm init -y  > /dev/null 2>&1
 
     if install_package_version "$package_name" "$version"; then
       latest_version="$version"
@@ -162,32 +166,91 @@ restore_registry() {
 }
 
 main() {
+  local source_mode="file"
+  local input_file=""
+  local output_file="last_downloaded_versions.txt"
+
+  # Parse arguments
   if [[ $# -lt 1 ]]; then
     usage
   fi
 
-  local dependencies_file=$1
-  local output_file="last_downloaded_versions.txt"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source)
+        shift
+        if [[ $# -gt 0 ]]; then
+          source_mode="$1"
+          shift
+        else
+          echo "Error: Missing argument for --source option"
+          usage
+        fi
+        ;;
+      -h|--help)
+        usage
+        ;;
+      *)
+        input_file="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$input_file" ]]; then
+    echo "Error: No input file or package.json provided."
+    usage
+  fi
 
   # Check required commands
   check_command "jq"
   check_command "curl"
   check_command "npm"
 
-  validate_input_file "$dependencies_file"
   initialize_output_file "$output_file"
 
   # Store the old registry and set to local one
   OLD_REGISTRY=$(npm get registry)
   npm set registry http://localhost:4873
 
-  # Read dependencies line by line, ignoring empty or commented lines.
-  while IFS= read -r dependency; do
-    if [[ -z "$dependency" || "$dependency" == \#* ]]; then
-      continue
+  declare -a dependencies_list=()
+
+  # Determine the source of the dependencies
+  if [[ "$source_mode" == "file" ]]; then
+    validate_input_file "$input_file"
+    while IFS= read -r dependency; do
+      if [[ -n "$dependency" && "$dependency" != \#* ]]; then
+        dependencies_list+=("$dependency")
+      fi
+    done < "$input_file"
+  elif [[ "$source_mode" == "package" ]]; then
+    validate_input_file "$input_file"
+    # Extract every dependency from dependencies, devDependencies, peerDependencies
+    # if they exist, then sort and remove duplicates
+    mapfile -t dependencies_list < <(jq -r '
+      [
+        .dependencies?,
+        .devDependencies?,
+        .peerDependencies?
+      ]
+      | map(select(. != null))
+      | map(keys)
+      | add
+      | unique[]
+    ' "$input_file")
+    if [[ ${#dependencies_list[@]} -eq 0 ]]; then
+      echo "No dependencies, devDependencies, or peerDependencies found in $input_file."
+      exit 0
     fi
+  else
+    echo "Error: Invalid source mode. Choose 'file' or 'package'."
+    exit 1
+  fi
+
+  # Process each dependency
+  for dependency in "${dependencies_list[@]}"; do
     process_package_versions "$dependency" "$output_file"
-  done < "$dependencies_file"
+  done
 
   echo "Processing completed for all dependencies."
   echo "The last downloaded versions have been updated in $output_file"
