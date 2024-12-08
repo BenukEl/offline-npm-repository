@@ -20,6 +20,12 @@ if [ ! -f "$OUTPUT_FILE" ]; then
   touch "$OUTPUT_FILE"
 fi
 
+# Fonction pour encoder une dépendance pour l'URL
+url_encode() {
+  local raw=$1
+  echo -n "$raw" | jq -sRr @uri
+}
+
 # Fonction pour installer et traiter les versions d'une dépendance
 process_package_versions() {
   local package_name=$1
@@ -28,9 +34,13 @@ process_package_versions() {
   echo "Traitement du package : $package_name"
   echo "======================================="
 
+  # Encoder le nom de la dépendance pour l'utiliser dans l'URL
+  local encoded_name
+  encoded_name=$(url_encode "$package_name")
+
   # Récupérer les métadonnées du package via npm registry
   local package_metadata
-  package_metadata=$(curl -s "https://registry.npmjs.org/$package_name")
+  package_metadata=$(curl -s "https://registry.npmjs.org/$encoded_name")
   if [[ -z "$package_metadata" ]]; then
     echo "Erreur : Impossible de récupérer les métadonnées pour $package_name"
     return 1
