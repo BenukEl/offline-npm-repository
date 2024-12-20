@@ -1,0 +1,18 @@
+issue-845-fix: True
+inpackage: True
+recursive: True
+dir: "{{.InterfaceDir}}"
+filename: "Mock{{.InterfaceName}}.go"
+packages:
+  github.com/npmoffline/internal/pkg/logger:
+    config:
+      all: True
+  github.com/npmoffline/internal/pkg/httpclient:
+    config:
+      all: True
+  github.com/npmoffline/internal/pkg/filesystem:
+    config:
+      all: True
+  github.com/npmoffline/internal/repositories:
+    config:
+      all: True
