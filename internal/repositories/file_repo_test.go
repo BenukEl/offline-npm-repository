@@ -200,8 +200,7 @@ func TestLoadOrCreateDownloadState(t *testing.T) {
 		// Appelle la méthode LoadOrCreateDownloadState
 		result, err := repo.LoadOrCreateDownloadState()
 		assert.Error(t, err)
-		assert.Nil(t, result)
-
+		assert.Equal(t, make(map[string]entities.SemVer), result)
 	})
 
 }

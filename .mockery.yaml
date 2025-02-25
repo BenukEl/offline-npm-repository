@@ -16,3 +16,9 @@ packages:
   github.com/npmoffline/internal/repositories:
     config:
       all: True
+  github.com/npmoffline/internal/services:
+    config:
+      all: True 
+  github.com/npmoffline/internal/entities:
+    config:
+      all: True

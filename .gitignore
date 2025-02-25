@@ -1,3 +1,7 @@
 */**/Mock*.go
 dest/
 *.txt
+*.log
+data/
+npm-pkg
+download_state

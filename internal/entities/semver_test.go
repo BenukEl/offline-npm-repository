@@ -146,6 +146,32 @@ func TestCompare(t *testing.T) {
 	}
 }
 
+func TestIsPreRelease(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  SemVer
+		expected bool
+	}{
+		{
+			name:     "No pre-release",
+			version:  SemVer{Major: 1, Minor: 2, Patch: 3},
+			expected: false,
+		},
+		{
+			name:     "With pre-release",
+			version:  SemVer{Major: 1, Minor: 2, Patch: 3, PreRelease: "rc1"},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.version.IsPreRelease()
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestString(t *testing.T) {
 	tests := []struct {
 		name     string

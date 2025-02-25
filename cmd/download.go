@@ -94,16 +94,16 @@ You can combine these flags and arguments in a single command.`,
 		npmRepo := repositories.NewNpmRepository("https://registry.npmjs.org", httpCli, log)
 		fileRepo := repositories.NewFileRepository(downloadDest, fs, downloadStateFile)
 
-		serv := services.NewDownloadService(npmRepo, fileRepo, log)
+		serv := services.NewNpmDownloadService(npmRepo, fileRepo, log)
 
 		// Pass the options for parallel workers and update local repository
-		options := services.StartOptions{
+		options := services.DownloadPackagesOptions{
 			MetadataWorkers:       metadataWorkers,
 			DownloadWorkers:       downloadWorkers,
 			UpdateLocalRepository: updateLocalRepository,
 		}
 
-		serv.Start(ctx, pkgList, options)
+		serv.DownloadPackages(ctx, pkgList, options)
 
 		// For demonstration, just print the result
 		fmt.Println("Starting download...")

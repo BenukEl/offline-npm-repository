@@ -85,6 +85,11 @@ func (v SemVer) Compare(other SemVer) int {
 	return 0 // Versions are equal
 }
 
+// IsPreRelease returns true if the version is a pre-release.
+func (v SemVer) IsPreRelease() bool {
+	return v.PreRelease != ""
+}
+
 // String returns the string representation of the version.
 func (v SemVer) String() string {
 	version := fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
