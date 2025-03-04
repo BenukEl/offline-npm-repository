@@ -209,7 +209,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 		fetchErr := fmt.Errorf("fetch error")
 		mockRemoteRepo.On("FetchMetadata", mock.Anything, packageName).Return(nil, fetchErr).Once()
-		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %w", workerID, 1, packageName, fetchErr).Once()
+		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %v", workerID, 1, packageName, fetchErr).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)
@@ -221,7 +221,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		// Assertions
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to fetch metadata for")
-		mockLogger.AssertCalled(t, "Error", "[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %w", workerID, 1, packageName, fetchErr)
+		mockLogger.AssertCalled(t, "Error", "[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %v", workerID, 1, packageName, fetchErr)
 	})
 
 	t.Run("Error in WritePackageJSON", func(t *testing.T) {
@@ -236,7 +236,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 		writeErr := fmt.Errorf("write error")
 		mockLocalRepo.On("WritePackageJSON", packageName, reader).Return(nil, writeErr).Once()
-		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %w", workerID, 1, packageName, writeErr).Once()
+		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %v", workerID, 1, packageName, writeErr).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)
@@ -266,7 +266,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 		decodeErr := fmt.Errorf("decode error")
 		mockRemoteRepo.On("DecodeNpmPackages", teeReader).Return(nil, decodeErr).Once()
-		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %w", workerID, 1, packageName, decodeErr).Once()
+		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %v", workerID, 1, packageName, decodeErr).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)

@@ -106,7 +106,7 @@ func TestTarballWorkerPool_StartWorker(t *testing.T) {
 		mockLogger.On("Debug", "[dl_#%d] Worker started", workerID).Once()
 		mockLogger.On("Debug", "[dl_#%d] Attempt %d: Downloading tarball for package %s:%s", workerID, 1, pkg.Name, pkg.Version.String()).Once()
 		mockLogger.On("Debug", "[dl_#%d] Worker stopped due to inactivity", workerID)
-		mockLogger.On("Error", "[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%w", workerID, 1, pkg.Name, mock.Anything, mock.Anything).Once()
+		mockLogger.On("Error", "[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%v", workerID, 1, pkg.Name, mock.Anything, mock.Anything).Once()
 		mockLogger.On("Error", "[dl_#%d] Failed to download tarball for %s: %w", workerID, pkg.Name, mock.Anything).Once()
 		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, pkg.Url).Return(nil, assert.AnError).Once()
 
@@ -162,7 +162,7 @@ func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 				Return(nil, downloadErr).
 				Once()
 			mockLogger.
-				On("Error", "[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%w", workerID, i, packageName, dummyVersion.String(), downloadErr).
+				On("Error", "[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%v", workerID, i, packageName, dummyVersion.String(), downloadErr).
 				Once()
 		}
 
@@ -190,7 +190,7 @@ func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 				Return(reader, nil).
 				Once()
 			mockLogger.
-				On("Error", "[dl_#%d] Attempt %d: Failed to write tarball for %s:%s. Err:%w", workerID, i, packageName, dummyVersion.String(), writeErr).
+				On("Error", "[dl_#%d] Attempt %d: Failed to write tarball for %s:%s. Err:%v", workerID, i, packageName, dummyVersion.String(), writeErr).
 				Once()
 			mockLocalRepo.
 				On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).

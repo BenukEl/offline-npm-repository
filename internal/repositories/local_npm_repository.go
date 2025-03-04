@@ -48,14 +48,14 @@ func NewLocalNpmRepository(baseDir string, fs filesystem.FileSystem, stateFilePa
 func (r *localNpmRepo) WriteTarball(packageName, version, integrity string, reader io.ReadCloser) error {
 	destDir := r.getPackageDirectory(packageName)
 	if err := r.fs.MkdirAll(destDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", destDir, err)
+		return fmt.Errorf("failed to create directory %s: %v", destDir, err)
 	}
 
 	// Use path.Base to handle scoped packages correctly.
 	filePath := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", path.Base(packageName), version))
 	file, err := r.fs.Create(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", filePath, err)
+		return fmt.Errorf("failed to create file %s: %v", filePath, err)
 	}
 	defer file.Close()
 
@@ -64,7 +64,7 @@ func (r *localNpmRepo) WriteTarball(packageName, version, integrity string, read
 	// Use MultiWriter to write to both the file and the hasher.
 	mw := r.fs.MultiWriter(file, hasher)
 	if _, err := r.fs.Copy(mw, reader); err != nil {
-		return fmt.Errorf("failed to write tarball data: %w", err)
+		return fmt.Errorf("failed to write tarball data: %v", err)
 	}
 
 	// Calculate the integrity hash
@@ -94,13 +94,13 @@ func (t *teeReadCloser) Close() error {
 func (r *localNpmRepo) WritePackageJSON(packageName string, reader io.ReadCloser) (io.ReadCloser, error) {
 	destDir := r.getPackageDirectory(packageName)
 	if err := r.fs.MkdirAll(destDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to create directory %s: %w", destDir, err)
+		return nil, fmt.Errorf("failed to create directory %s: %v", destDir, err)
 	}
 
 	filePath := filepath.Join(destDir, "package.json")
 	file, err := r.fs.Create(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create file %s: %w", filePath, err)
+		return nil, fmt.Errorf("failed to create file %s: %v", filePath, err)
 	}
 
 	tee := r.fs.TeeReader(reader, file)
@@ -117,7 +117,7 @@ func (r *localNpmRepo) LoadDownloadedPackagesState() ([]entities.RetrievePackage
 			// If the file does not exist, return an empty state.
 			return []entities.RetrievePackage{}, time.Time{}, nil
 		}
-		return nil, time.Time{}, fmt.Errorf("failed to open file %s: %w", r.stateFilePath, err)
+		return nil, time.Time{}, fmt.Errorf("failed to open file %s: %v", r.stateFilePath, err)
 	}
 	defer file.Close()
 
@@ -159,7 +159,7 @@ func (r *localNpmRepo) LoadDownloadedPackagesState() ([]entities.RetrievePackage
 func (r *localNpmRepo) SaveDownloadedPackagesState(packages []entities.RetrievePackage, lastSync time.Time) error {
 	file, err := r.fs.Create(r.stateFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", r.stateFilePath, err)
+		return fmt.Errorf("failed to create file %s: %v", r.stateFilePath, err)
 	}
 	defer file.Close()
 
@@ -167,17 +167,17 @@ func (r *localNpmRepo) SaveDownloadedPackagesState(packages []entities.RetrieveP
 
 	// Write the sync date
 	if _, err := writer.WriteString(fmt.Sprintf("Last sync: %s\n", lastSync.Format(time.RFC3339))); err != nil {
-		return fmt.Errorf("failed to write sync date to file %s: %w", r.stateFilePath, err)
+		return fmt.Errorf("failed to write sync date to file %s: %v", r.stateFilePath, err)
 	}
 	// Write each package name on a new line.
 	for _, pkg := range packages {
 		if _, err := writer.WriteString(pkg.String() + "\n"); err != nil {
-			return fmt.Errorf("failed to write package to file %s: %w", r.stateFilePath, err)
+			return fmt.Errorf("failed to write package to file %s: %v", r.stateFilePath, err)
 		}
 	}
 
 	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush data to file %s: %w", r.stateFilePath, err)
+		return fmt.Errorf("failed to flush data to file %s: %v", r.stateFilePath, err)
 	}
 
 	return nil

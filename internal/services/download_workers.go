@@ -100,7 +100,7 @@ func (p *tarballWorkerPool) downloadTarball(ctx context.Context, pkg entities.Np
 
 		reader, err := p.remoteNpmRepo.DownloadTarballStream(ctx, pkg.Url)
 		if err != nil {
-			p.logger.Error("[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%w", workerID, attempt, pkg.Name, pkg.Version.String(), err)
+			p.logger.Error("[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%v", workerID, attempt, pkg.Name, pkg.Version.String(), err)
 			lastErr = err
 			// Délai progressif avant la prochaine tentative
 			time.Sleep(time.Duration(attempt) * p.backoffFactor)
@@ -110,7 +110,7 @@ func (p *tarballWorkerPool) downloadTarball(ctx context.Context, pkg entities.Np
 		err = p.localNpmRepo.WriteTarball(pkg.Name, pkg.Version.String(), pkg.Integrity, reader)
 		reader.Close()
 		if err != nil {
-			p.logger.Error("[dl_#%d] Attempt %d: Failed to write tarball for %s:%s. Err:%w", workerID, attempt, pkg.Name, pkg.Version.String(), err)
+			p.logger.Error("[dl_#%d] Attempt %d: Failed to write tarball for %s:%s. Err:%v", workerID, attempt, pkg.Name, pkg.Version.String(), err)
 			lastErr = err
 			time.Sleep(time.Duration(attempt) * p.backoffFactor)
 			continue

@@ -40,7 +40,7 @@ type npmDownloadService struct {
 func NewNpmDownloadService(npmRepo repositories.NpmRepository, fileRepo repositories.LocalNpmRepository, log logger.Logger) *npmDownloadService {
 	packages, lastSync, err := fileRepo.LoadDownloadedPackagesState()
 	if err != nil {
-		log.Error("Failed to load downloaded versions: %w", err)
+		log.Error("Failed to load downloaded versions: %v", err)
 		return nil
 	}
 

@@ -146,7 +146,7 @@ func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.Ret
 
 		reader, err := f.remoteNpmRepo.FetchMetadata(ctx, pkg.Name)
 		if err != nil {
-			f.logger.Error("[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %w", workerID, attempt, pkg.Name, err)
+			f.logger.Error("[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %v", workerID, attempt, pkg.Name, err)
 			lastErr = err
 			// Progressive delay before the next
 			time.Sleep(time.Duration(attempt) * f.backoffFactor)
@@ -156,7 +156,7 @@ func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.Ret
 		teeReader, err := f.localNpmRepo.WritePackageJSON(pkg.Name, reader)
 		reader.Close()
 		if err != nil {
-			f.logger.Error("[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %w", workerID, attempt, pkg.Name, err)
+			f.logger.Error("[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %v", workerID, attempt, pkg.Name, err)
 			lastErr = err
 			time.Sleep(time.Duration(attempt) * f.backoffFactor)
 			continue
@@ -165,7 +165,7 @@ func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.Ret
 		packages, err := f.remoteNpmRepo.DecodeNpmPackages(teeReader)
 		teeReader.Close()
 		if err != nil {
-			f.logger.Error("[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %w", workerID, attempt, pkg.Name, err)
+			f.logger.Error("[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %v", workerID, attempt, pkg.Name, err)
 			lastErr = err
 			time.Sleep(time.Duration(attempt) * f.backoffFactor)
 			continue
@@ -174,7 +174,7 @@ func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.Ret
 		return packages, nil
 	}
 
-	return nil, fmt.Errorf("failed to fetch metadata for %s. Err: %w", pkg.Name, lastErr)
+	return nil, fmt.Errorf("failed to fetch metadata for %s. Err: %v", pkg.Name, lastErr)
 }
 
 // filterPackages filtre pre-release versions and versions that are less than the last version.

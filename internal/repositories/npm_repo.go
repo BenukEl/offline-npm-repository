@@ -35,7 +35,7 @@ type NpmPackageMetadata struct {
 func (m *NpmPackageMetadata) ToNpmPackage(date time.Time) (entities.NpmPackage, error) {
 	version, err := entities.NewSemVer(m.Version)
 	if err != nil {
-		return entities.NpmPackage{}, fmt.Errorf("failed to convert version: %w", err)
+		return entities.NpmPackage{}, fmt.Errorf("failed to convert version: %v", err)
 	}
 
 	// Convert dependencies and peer dependencies to a slice of strings
@@ -99,7 +99,7 @@ func (r *npmRepository) FetchMetadata(ctx context.Context, packageName string) (
 
 	resp, err := r.client.Do(ctx, "GET", url, nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch metadata: %w", err)
+		return nil, fmt.Errorf("failed to fetch metadata: %v", err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -114,7 +114,7 @@ func (r *npmRepository) FetchMetadata(ctx context.Context, packageName string) (
 func (r *npmRepository) DownloadTarballStream(ctx context.Context, tarballURL string) (io.ReadCloser, error) {
 	resp, err := r.client.Do(ctx, "GET", tarballURL, nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download tarball: %w", err)
+		return nil, fmt.Errorf("failed to download tarball: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -130,14 +130,14 @@ func (r *npmRepository) DownloadTarballStream(ctx context.Context, tarballURL st
 func (r *npmRepository) DecodeNpmPackages(reader io.Reader) ([]entities.NpmPackage, error) {
 	var metadata NpmResponse
 	if err := json.NewDecoder(reader).Decode(&metadata); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
 	var packages []entities.NpmPackage
 	for _, releasedPackage := range metadata.Versions {
 		pkg, err := releasedPackage.ToNpmPackage(metadata.Time[releasedPackage.Version])
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert metadata: %w", err)
+			return nil, fmt.Errorf("failed to convert metadata: %v", err)
 		}
 		packages = append(packages, pkg)
 	}
