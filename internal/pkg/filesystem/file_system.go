@@ -70,6 +70,7 @@ type FileSystem interface {
 	NewReader(file io.Reader) Reader
 	NewWriter(file io.Writer) Writer
 	NewScanner(file io.Reader) Scanner
+	MultiWriter(writers ...io.Writer) io.Writer
 }
 
 type osFileSystem struct{}
@@ -108,4 +109,8 @@ func (fs *osFileSystem) NewWriter(file io.Writer) Writer {
 
 func (fs *osFileSystem) NewScanner(file io.Reader) Scanner {
 	return &scanner{scanner: bufio.NewScanner(file)}
+}
+
+func (fs *osFileSystem) MultiWriter(writers ...io.Writer) io.Writer {
+	return io.MultiWriter(writers...)
 }

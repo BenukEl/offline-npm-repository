@@ -12,12 +12,13 @@ import (
 
 	"github.com/npmoffline/internal/entities"
 	"github.com/npmoffline/internal/pkg/filesystem"
+	"github.com/npmoffline/internal/pkg/integrity"
 )
 
 // LocalNpmRepository defines operations for writing tarballs and metadata,
 // and for managing the downloaded packages state.
 type LocalNpmRepository interface {
-	WriteTarball(packageName, version string, reader io.ReadCloser) error
+	WriteTarball(packageName, version, integrity string, reader io.ReadCloser) error
 	WritePackageJSON(packageName string, reader io.ReadCloser) (io.ReadCloser, error)
 	LoadDownloadedPackagesState() ([]entities.RetrievePackage, time.Time, error)
 	SaveDownloadedPackagesState(packages []entities.RetrievePackage, lastSync time.Time) error
@@ -25,24 +26,26 @@ type LocalNpmRepository interface {
 
 // localNpmRepo implements LocalNpmRepository.
 type localNpmRepo struct {
-	npmDirPath    string
-	stateFilePath string
-	fs            filesystem.FileSystem
+	npmDirPath       string
+	stateFilePath    string
+	fs               filesystem.FileSystem
+	integrityChecker integrity.IntegrityChecker
 }
 
 // NewLocalNpmRepository creates a new instance of LocalNpmRepository.
 // - baseDir is the root directory for storing package files.
 // - stateFilePath is the file path where the downloaded packages state is stored.
-func NewLocalNpmRepository(baseDir string, fs filesystem.FileSystem, stateFilePath string) LocalNpmRepository {
+func NewLocalNpmRepository(baseDir string, fs filesystem.FileSystem, stateFilePath string) *localNpmRepo {
 	return &localNpmRepo{
-		npmDirPath:    baseDir,
-		stateFilePath: stateFilePath,
-		fs:            fs,
+		npmDirPath:       baseDir,
+		stateFilePath:    stateFilePath,
+		fs:               fs,
+		integrityChecker: integrity.NewIntegrityChecker(),
 	}
 }
 
 // WriteTarball writes the tarball data to the appropriate directory.
-func (r *localNpmRepo) WriteTarball(packageName, version string, reader io.ReadCloser) error {
+func (r *localNpmRepo) WriteTarball(packageName, version, integrity string, reader io.ReadCloser) error {
 	destDir := r.getPackageDirectory(packageName)
 	if err := r.fs.MkdirAll(destDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", destDir, err)
@@ -56,8 +59,17 @@ func (r *localNpmRepo) WriteTarball(packageName, version string, reader io.ReadC
 	}
 	defer file.Close()
 
-	if _, err := r.fs.Copy(file, reader); err != nil {
+	// create a new hasher
+	hasher := r.integrityChecker.NewHash()
+	// Use MultiWriter to write to both the file and the hasher.
+	mw := r.fs.MultiWriter(file, hasher)
+	if _, err := r.fs.Copy(mw, reader); err != nil {
 		return fmt.Errorf("failed to write tarball data: %w", err)
+	}
+
+	// Calculate the integrity hash
+	if integrity != r.integrityChecker.GetSha512(hasher) {
+		return fmt.Errorf("integrity hash does not match")
 	}
 
 	return nil

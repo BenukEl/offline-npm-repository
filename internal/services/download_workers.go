@@ -95,7 +95,7 @@ func (f *tarballWorkerPool) downloadTarball(ctx context.Context, pkg entities.Np
 	}
 	defer reader.Close()
 
-	if err := f.localNpmRepo.WriteTarball(pkg.Name, pkg.Version.String(), reader); err != nil {
+	if err := f.localNpmRepo.WriteTarball(pkg.Name, pkg.Version.String(), pkg.Integrity, reader); err != nil {
 		f.logger.Error("Failed to write tarball for %s: %w", pkg.Name, err)
 		return err
 	}

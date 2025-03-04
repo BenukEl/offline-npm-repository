@@ -13,6 +13,9 @@ packages:
   github.com/npmoffline/internal/pkg/filesystem:
     config:
       all: True
+  github.com/npmoffline/internal/pkg/integrity:
+    config:
+      all: True
   github.com/npmoffline/internal/repositories:
     config:
       all: True

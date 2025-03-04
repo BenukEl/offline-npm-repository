@@ -201,7 +201,7 @@ func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 
 		writeErr := fmt.Errorf("write tarball")
 		mockLogger.On("Error", "Failed to write tarball for %s: %w", packageName, writeErr).Once()
-		mockLocalRepo.On("WriteTarball", packageName, dummyVersion.String(), mock.Anything).Return(writeErr).Once()
+		mockLocalRepo.On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).Return(writeErr).Once()
 
 		ctx := context.Background()
 		err := pool.downloadTarball(ctx, pkg, workerID)
@@ -218,7 +218,7 @@ func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 		mockLogger.On("Debug", "[dl_#%d] Successfully downloaded tarball for package %s:%s", workerID, packageName, dummyVersion.String()).Once()
 
 		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, dummyUrl).Return(reader, nil).Once()
-		mockLocalRepo.On("WriteTarball", packageName, dummyVersion.String(), mock.Anything).Return(nil).Once()
+		mockLocalRepo.On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).Return(nil).Once()
 		mockLocalState.On("IncrementDownloadedCount").Once()
 
 		ctx := context.Background()
