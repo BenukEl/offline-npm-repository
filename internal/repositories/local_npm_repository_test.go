@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +14,9 @@ import (
 
 	"github.com/npmoffline/internal/entities"
 	"github.com/npmoffline/internal/pkg/filesystem"
+	"github.com/npmoffline/internal/pkg/integrity"
 	"github.com/stretchr/testify/assert"
+	mock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,10 +72,19 @@ func (s *fakeScanner) Err() error {
 	return s.err
 }
 
+// sha512sum calcule le hash SHA-512 d'une chaîne et retourne sa représentation hexadécimale.
+func sha512sum(data string) string {
+	h := sha512.New()
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func TestWriteTarball(t *testing.T) {
 	packageName := "lodash"
 	version := "1.0.0"
 	readerContent := "tarball data"
+	// Calcul de l'intégrité attendue pour les données du tarball.
+	expectedIntegrity := sha512sum(readerContent)
 
 	destDir := filepath.Join("base", filepath.FromSlash(packageName))
 	filePath := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", path.Base(packageName), version))
@@ -81,11 +94,11 @@ func TestWriteTarball(t *testing.T) {
 
 	t.Run("MkdirAll fails", func(t *testing.T) {
 		repo := NewLocalNpmRepository("base", mockFS, "state.txt")
-		reader := io.NopCloser(strings.NewReader("tarball data"))
+		reader := io.NopCloser(strings.NewReader(readerContent))
 
 		mockFS.On("MkdirAll", destDir, os.ModePerm).Return(fmt.Errorf("mkdir error")).Once()
 
-		err := repo.WriteTarball(packageName, version, reader)
+		err := repo.WriteTarball(packageName, version, expectedIntegrity, reader)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create directory")
 		mockFS.AssertExpectations(t)
@@ -93,12 +106,12 @@ func TestWriteTarball(t *testing.T) {
 
 	t.Run("Create fails", func(t *testing.T) {
 		repo := NewLocalNpmRepository("base", mockFS, "state.txt")
-		reader := io.NopCloser(strings.NewReader("tarball data"))
+		reader := io.NopCloser(strings.NewReader(readerContent))
 
 		mockFS.On("MkdirAll", destDir, os.ModePerm).Return(nil).Once()
 		mockFS.On("Create", filePath).Return(nil, fmt.Errorf("create error")).Once()
 
-		err := repo.WriteTarball(packageName, version, reader)
+		err := repo.WriteTarball(packageName, version, expectedIntegrity, reader)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create file")
 		mockFS.AssertExpectations(t)
@@ -106,35 +119,59 @@ func TestWriteTarball(t *testing.T) {
 
 	t.Run("Copy fails", func(t *testing.T) {
 		repo := NewLocalNpmRepository("base", mockFS, "state.txt")
-
 		reader := io.NopCloser(strings.NewReader(readerContent))
-		// Mock file
 
 		mockFS.On("MkdirAll", destDir, os.ModePerm).Return(nil).Once()
 		mockFS.On("Create", filePath).Return(mockFile, nil).Once()
-		mockFS.On("Copy", mockFile, reader).Return(int64(0), fmt.Errorf("copy error")).Once()
+		mockFS.On("MultiWriter", mockFile, mock.Anything).Return(mockFile).Once()
+		mockFS.On("Copy", mock.Anything, reader).Return(int64(0), fmt.Errorf("copy error")).Once()
 
-		err := repo.WriteTarball(packageName, version, reader)
-
+		err := repo.WriteTarball(packageName, version, expectedIntegrity, reader)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to write tarball data")
 		mockFS.AssertExpectations(t)
 	})
 
-	t.Run("Success", func(t *testing.T) {
+	t.Run("Integrity fails", func(t *testing.T) {
 		repo := NewLocalNpmRepository("base", mockFS, "state.txt")
-
 		reader := io.NopCloser(strings.NewReader(readerContent))
+		incorrectIntegrity := "incorrecthash"
 
 		mockFS.On("MkdirAll", destDir, os.ModePerm).Return(nil).Once()
 		mockFS.On("Create", filePath).Return(mockFile, nil).Once()
-		mockFS.On("Copy", mockFile, reader).Return(int64(len(readerContent)), nil).Once()
+		mockFS.On("MultiWriter", mockFile, mock.Anything).Return(mockFile).Once()
+		mockFS.On("Copy", mock.Anything, reader).Return(int64(len(readerContent)), nil).Once()
 
-		err := repo.WriteTarball(packageName, version, reader)
+		err := repo.WriteTarball(packageName, version, incorrectIntegrity, reader)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "integrity hash does not match")
+		mockFS.AssertExpectations(t)
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		mockIntegrityChecker := integrity.NewMockIntegrityChecker(t)
+		repo := &localNpmRepo{
+			fs:               mockFS,
+			npmDirPath:       "base",
+			stateFilePath:    "state.txt",
+			integrityChecker: mockIntegrityChecker,
+		}
+
+		reader := io.NopCloser(strings.NewReader(readerContent))
+
+		mockIntegrityChecker.On("NewHash").Return(sha512.New()).Once()
+		mockIntegrityChecker.On("GetSha512", mock.Anything).Return(expectedIntegrity).Once()
+		mockFS.On("MkdirAll", destDir, os.ModePerm).Return(nil).Once()
+		mockFS.On("Create", filePath).Return(mockFile, nil).Once()
+		mockFS.On("MultiWriter", mockFile, mock.Anything).Return(mockFile).Once()
+		mockFS.On("Copy", mock.Anything, reader).Return(int64(len(readerContent)), nil).Once()
+
+		err := repo.WriteTarball(packageName, version, expectedIntegrity, reader)
 		require.NoError(t, err)
 		mockFS.AssertExpectations(t)
 	})
 }
+
 func TestWritePackageJSON(t *testing.T) {
 	packageName := "react"
 	jsonContent := `{"name": "react"}`

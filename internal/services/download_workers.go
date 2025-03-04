@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -10,39 +11,45 @@ import (
 	"github.com/npmoffline/internal/repositories"
 )
 
+const maxRetries = 5
+
 // TarballWorkerPool defines the interface for tarball download workers.
 type TarballWorkerPool interface {
-	StartWorker(ctx context.Context, downloadChan chan entities.NpmPackage, workerID int, inactivityTime time.Duration)
+	StartWorker(ctx context.Context, downloadChan <-chan entities.NpmPackage, workerID int, inactivityTime time.Duration)
 	WaitAllWorkers()
 }
 
 // tarballWorkerPool is the concrete implementation of DownloadWorkerFactory.
 type tarballWorkerPool struct {
-	logger        logger.Logger
-	wg            *sync.WaitGroup
-	localNpmRepo  repositories.LocalNpmRepository
-	remoteNpmRepo repositories.NpmRepository
-	localNpmState entities.LocalNpmState
+	logger             logger.Logger
+	wg                 *sync.WaitGroup
+	localNpmRepo       repositories.LocalNpmRepository
+	remoteNpmRepo      repositories.NpmRepository
+	localNpmState      entities.LocalNpmState
+	backoffFactor      time.Duration
+	maxDownloadRetries int
 }
 
 // NewTarballdWorkerPool creates a new instance of DownloadWorkerFactory.
 func NewTarballdWorkerPool(logger logger.Logger, localNpmRepo repositories.LocalNpmRepository, remoteNpmRepo repositories.NpmRepository, localNpmState entities.LocalNpmState) TarballWorkerPool {
 	return &tarballWorkerPool{
-		logger:        logger,
-		wg:            &sync.WaitGroup{},
-		localNpmRepo:  localNpmRepo,
-		remoteNpmRepo: remoteNpmRepo,
-		localNpmState: localNpmState,
+		logger:             logger,
+		wg:                 &sync.WaitGroup{},
+		localNpmRepo:       localNpmRepo,
+		remoteNpmRepo:      remoteNpmRepo,
+		localNpmState:      localNpmState,
+		backoffFactor:      time.Second,
+		maxDownloadRetries: maxRetries,
 	}
 }
 
 // StartWorker launches a download worker.
-func (f *tarballWorkerPool) StartWorker(ctx context.Context, downloadChan chan entities.NpmPackage, workerID int, inactivityTime time.Duration) {
-	f.wg.Add(1)
+func (p *tarballWorkerPool) StartWorker(ctx context.Context, downloadChan <-chan entities.NpmPackage, workerID int, inactivityTime time.Duration) {
+	p.wg.Add(1)
 	go func(id int) {
-		defer f.wg.Done()
+		defer p.wg.Done()
 
-		f.logger.Debug("[dl_#%d] Worker started", id)
+		p.logger.Debug("[dl_#%d] Worker started", id)
 
 		// create a timer to stop the worker if it is inactive for a certain time.
 		timer := time.NewTimer(inactivityTime)
@@ -51,18 +58,18 @@ func (f *tarballWorkerPool) StartWorker(ctx context.Context, downloadChan chan e
 		for {
 			select {
 			case <-ctx.Done():
-				f.logger.Debug("[dl_#%d] Received context cancellation", id)
+				p.logger.Debug("[dl_#%d] Received context cancellation", id)
 				return
 			case pkg, ok := <-downloadChan:
 				if !ok {
-					f.logger.Debug("[dl_#%d] Download channel closed", id)
+					p.logger.Debug("[dl_#%d] Download channel closed", id)
 					return
 				}
 				if pkg.Name == "" {
 					continue
 				}
-				if err := f.downloadTarball(ctx, pkg, id); err != nil {
-					f.logger.Error("[dl_#%d] Failed to download tarball for %s: %w", id, pkg.Name, err)
+				if err := p.downloadTarball(ctx, pkg, id); err != nil {
+					p.logger.Error("[dl_#%d] Failed to download tarball for %s: %w", id, pkg.Name, err)
 				}
 				// Reset the timer to avoid stopping the worker.
 				if !timer.Stop() {
@@ -70,7 +77,7 @@ func (f *tarballWorkerPool) StartWorker(ctx context.Context, downloadChan chan e
 				}
 				timer.Reset(inactivityTime)
 			case <-timer.C:
-				f.logger.Debug("[dl_#%d] Worker stopped due to inactivity", id)
+				p.logger.Debug("[dl_#%d] Worker stopped due to inactivity", id)
 				return
 			}
 		}
@@ -83,27 +90,38 @@ func (f *tarballWorkerPool) WaitAllWorkers() {
 }
 
 // downloadTarball downloads the tarball for the given package.
-func (f *tarballWorkerPool) downloadTarball(ctx context.Context, pkg entities.NpmPackage, workerID int) error {
-	if f.logger.IsDebug() {
-		f.logger.Debug("[dl_#%d] Downloading tarball for package %s:%s", workerID, pkg.Name, pkg.Version.String())
+func (p *tarballWorkerPool) downloadTarball(ctx context.Context, pkg entities.NpmPackage, workerID int) error {
+	var lastErr error
+
+	for attempt := 1; attempt <= p.maxDownloadRetries; attempt++ {
+		if p.logger.IsDebug() {
+			p.logger.Debug("[dl_#%d] Attempt %d: Downloading tarball for package %s:%s", workerID, attempt, pkg.Name, pkg.Version.String())
+		}
+
+		reader, err := p.remoteNpmRepo.DownloadTarballStream(ctx, pkg.Url)
+		if err != nil {
+			p.logger.Error("[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%w", workerID, attempt, pkg.Name, pkg.Version.String(), err)
+			lastErr = err
+			// Délai progressif avant la prochaine tentative
+			time.Sleep(time.Duration(attempt) * p.backoffFactor)
+			continue
+		}
+
+		err = p.localNpmRepo.WriteTarball(pkg.Name, pkg.Version.String(), pkg.Integrity, reader)
+		reader.Close()
+		if err != nil {
+			p.logger.Error("[dl_#%d] Attempt %d: Failed to write tarball for %s:%s. Err:%w", workerID, attempt, pkg.Name, pkg.Version.String(), err)
+			lastErr = err
+			time.Sleep(time.Duration(attempt) * p.backoffFactor)
+			continue
+		}
+
+		p.localNpmState.IncrementDownloadedCount()
+		if p.logger.IsDebug() {
+			p.logger.Debug("[dl_#%d] Successfully downloaded tarball for package %s:%s", workerID, pkg.Name, pkg.Version.String())
+		}
+		return nil
 	}
 
-	reader, err := f.remoteNpmRepo.DownloadTarballStream(ctx, pkg.Url)
-	if err != nil {
-		f.logger.Error("[dl_#%d] Failed to download tarball for %s:%s. Err:%w", workerID, pkg.Name, pkg.Version.String(), err)
-		return err
-	}
-	defer reader.Close()
-
-	if err := f.localNpmRepo.WriteTarball(pkg.Name, pkg.Version.String(), pkg.Integrity, reader); err != nil {
-		f.logger.Error("Failed to write tarball for %s: %w", pkg.Name, err)
-		return err
-	}
-
-	f.localNpmState.IncrementDownloadedCount()
-	if f.logger.IsDebug() {
-		f.logger.Debug("[dl_#%d] Successfully downloaded tarball for package %s:%s", workerID, pkg.Name, pkg.Version.String())
-	}
-
-	return nil
+	return fmt.Errorf("failed to download tarball for package %s after %d attempts: %w", pkg.Name, p.maxDownloadRetries, lastErr)
 }

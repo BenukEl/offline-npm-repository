@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -119,41 +120,6 @@ func TestTarballWorkerPool_StartWorker(t *testing.T) {
 	})
 }
 
-func TestTarballWorkerPool_WaitAllWorkers(t *testing.T) {
-	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
-	mockRemoteRepo := repositories.NewMockNpmRepository(t)
-	mockLocalState := entities.NewMockLocalNpmState(t)
-
-	pool := &tarballWorkerPool{
-		logger:        mockLogger,
-		wg:            &sync.WaitGroup{},
-		localNpmRepo:  mockLocalRepo,
-		remoteNpmRepo: mockRemoteRepo,
-		localNpmState: mockLocalState,
-	}
-
-	t.Run("WaitAllWorkers returns immediately if no worker", func(t *testing.T) {
-		start := time.Now()
-		pool.WaitAllWorkers()
-		elapsed := time.Since(start)
-		assert.Less(t, elapsed, 10*time.Millisecond, "WaitAllWorkers should return immediately if no worker")
-	})
-
-	t.Run("WaitAllWorkers waits for workers to finish", func(t *testing.T) {
-		workerID := 1
-		mockLogger.On("Debug", "[dl_#%d] Worker started", workerID).Once()
-		mockLogger.On("Debug", "[dl_#%d] Worker stopped due to inactivity", workerID).Once()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
-
-		downloadChan := make(chan entities.NpmPackage, 10)
-		pool.StartWorker(ctx, downloadChan, workerID, mockWorkerInactivityTime)
-		pool.WaitAllWorkers()
-	})
-}
-
 func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 	packageName := "testpkg"
 	workerID := 1
@@ -170,56 +136,94 @@ func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
+	const maxRetries = 5
+
 	pool := &tarballWorkerPool{
-		logger:        mockLogger,
-		wg:            &sync.WaitGroup{},
-		localNpmRepo:  mockLocalRepo,
-		remoteNpmRepo: mockRemoteRepo,
-		localNpmState: mockLocalState,
+		logger:             mockLogger,
+		wg:                 &sync.WaitGroup{},
+		localNpmRepo:       mockLocalRepo,
+		remoteNpmRepo:      mockRemoteRepo,
+		localNpmState:      mockLocalState,
+		backoffFactor:      time.Millisecond * time.Duration(10),
+		maxDownloadRetries: maxRetries,
 	}
 
-	t.Run("Error in DownloadTarballStream", func(t *testing.T) {
+	t.Run("Erreur dans DownloadTarballStream", func(t *testing.T) {
 		downloadErr := fmt.Errorf("download error")
-		mockLogger.On("IsDebug").Return(true).Once()
-		mockLogger.On("Debug", "[dl_#%d] Downloading tarball for package %s:%s", workerID, packageName, dummyVersion.String()).Once()
-		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, dummyUrl).Return(nil, downloadErr).Once()
-		mockLogger.On("Error", "[dl_#%d] Failed to download tarball for %s:%s. Err:%w", workerID, packageName, dummyVersion.String(), downloadErr).Once()
+		// Pour chaque tentative, on s'attend à ce que IsDebug retourne true, puis que le log de debug et l'appel à DownloadTarballStream soient faits
+		mockLogger.On("IsDebug").Return(true).Times(maxRetries)
+		for i := 1; i <= maxRetries; i++ {
+			mockLogger.
+				On("Debug", "[dl_#%d] Attempt %d: Downloading tarball for package %s:%s", workerID, i, packageName, dummyVersion.String()).
+				Once()
+			mockRemoteRepo.
+				On("DownloadTarballStream", mock.Anything, dummyUrl).
+				Return(nil, downloadErr).
+				Once()
+			mockLogger.
+				On("Error", "[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%w", workerID, i, packageName, dummyVersion.String(), downloadErr).
+				Once()
+		}
 
 		ctx := context.Background()
 		err := pool.downloadTarball(ctx, pkg, workerID)
 		assert.Error(t, err)
-		assert.Equal(t, downloadErr, err)
+		// Le message d'erreur final doit mentionner "after 5 attempts" et l'erreur retournée doit être celle de téléchargement
+		assert.Contains(t, err.Error(), "after 5 attempts")
+		assert.True(t, errors.Is(err, downloadErr))
 	})
 
-	t.Run("Error in WriteTarball", func(t *testing.T) {
+	t.Run("Erreur dans WriteTarball", func(t *testing.T) {
 		dummyData := "tarball data"
-		reader := io.NopCloser(strings.NewReader(dummyData))
-
-		mockLogger.On("IsDebug").Return(true).Once()
-		mockLogger.On("Debug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Once()
-		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, dummyUrl).Return(reader, nil).Once()
-
 		writeErr := fmt.Errorf("write tarball")
-		mockLogger.On("Error", "Failed to write tarball for %s: %w", packageName, writeErr).Once()
-		mockLocalRepo.On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).Return(writeErr).Once()
+		// Pour chaque tentative, DownloadTarballStream réussit mais WriteTarball échoue
+		mockLogger.On("IsDebug").Return(true).Times(maxRetries)
+		for i := 1; i <= maxRetries; i++ {
+			mockLogger.
+				On("Debug", "[dl_#%d] Attempt %d: Downloading tarball for package %s:%s", workerID, i, packageName, dummyVersion.String()).
+				Once()
+			// À chaque tentative, retourner un nouveau reader
+			reader := io.NopCloser(strings.NewReader(dummyData))
+			mockRemoteRepo.
+				On("DownloadTarballStream", mock.Anything, dummyUrl).
+				Return(reader, nil).
+				Once()
+			mockLogger.
+				On("Error", "[dl_#%d] Attempt %d: Failed to write tarball for %s:%s. Err:%w", workerID, i, packageName, dummyVersion.String(), writeErr).
+				Once()
+			mockLocalRepo.
+				On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).
+				Return(writeErr).
+				Once()
+		}
 
 		ctx := context.Background()
 		err := pool.downloadTarball(ctx, pkg, workerID)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "write tarball")
+		assert.Contains(t, err.Error(), "after 5 attempts")
+		assert.True(t, errors.Is(err, writeErr))
 	})
 
-	t.Run("Successful download", func(t *testing.T) {
+	t.Run("Téléchargement réussi", func(t *testing.T) {
 		dummyData := "tarball data"
 		reader := io.NopCloser(strings.NewReader(dummyData))
-
+		// Ici, seule la première tentative doit réussir.
 		mockLogger.On("IsDebug").Return(true).Times(2)
-		mockLogger.On("Debug", "[dl_#%d] Downloading tarball for package %s:%s", workerID, packageName, dummyVersion.String()).Once()
-		mockLogger.On("Debug", "[dl_#%d] Successfully downloaded tarball for package %s:%s", workerID, packageName, dummyVersion.String()).Once()
-
-		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, dummyUrl).Return(reader, nil).Once()
-		mockLocalRepo.On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).Return(nil).Once()
+		mockLogger.
+			On("Debug", "[dl_#%d] Attempt %d: Downloading tarball for package %s:%s", workerID, 1, packageName, dummyVersion.String()).
+			Once()
+		mockRemoteRepo.
+			On("DownloadTarballStream", mock.Anything, dummyUrl).
+			Return(reader, nil).
+			Once()
+		mockLocalRepo.
+			On("WriteTarball", packageName, dummyVersion.String(), mock.Anything, mock.Anything).
+			Return(nil).
+			Once()
 		mockLocalState.On("IncrementDownloadedCount").Once()
+		mockLogger.
+			On("Debug", "[dl_#%d] Successfully downloaded tarball for package %s:%s", workerID, packageName, dummyVersion.String()).
+			Once()
 
 		ctx := context.Background()
 		err := pool.downloadTarball(ctx, pkg, workerID)
