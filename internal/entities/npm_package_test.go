@@ -62,3 +62,21 @@ func TestRetrievePackage_IsMatchingPreRelease(t *testing.T) {
 	})
 
 }
+
+func TestRetrievePackage_String(t *testing.T) {
+
+	t.Run("The package name does not contains regex", func(t *testing.T) {
+		name := "express"
+		rp := NewRetrievePackage(name)
+
+		assert.Equal(t, "express", rp.String())
+	})
+
+	t.Run("The package name contains regex", func(t *testing.T) {
+		name := "express|beta"
+		rp := NewRetrievePackage(name)
+
+		assert.Equal(t, "express|beta", rp.String())
+	})
+
+}

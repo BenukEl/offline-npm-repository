@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/npmoffline/internal/entities"
 	"github.com/npmoffline/internal/pkg/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -279,7 +280,10 @@ func TestLoadDownloadedPackagesState(t *testing.T) {
 
 		pkgs, readSyncTime, err := repo.LoadDownloadedPackagesState()
 		require.NoError(t, err)
-		assert.Equal(t, []string{"package1", "package2"}, pkgs)
+		assert.Equal(t, []entities.RetrievePackage{
+			entities.NewRetrievePackage("package1"),
+			entities.NewRetrievePackage("package2"),
+		}, pkgs)
 		assert.True(t, readSyncTime.Equal(syncTime))
 		mockFS.AssertExpectations(t)
 	})
@@ -303,6 +307,14 @@ func TestLoadDownloadedPackagesState(t *testing.T) {
 }
 
 func TestSaveDownloadedPackagesState(t *testing.T) {
+	onePkg := []entities.RetrievePackage{
+		entities.NewRetrievePackage("pkg1|alpha"),
+	}
+	twoPkgs := []entities.RetrievePackage{
+		entities.NewRetrievePackage("pkg1"),
+		entities.NewRetrievePackage("pkg2|toto"),
+	}
+
 	mockFile := os.NewFile(0, "test-file")
 	mockFS := filesystem.NewMockFileSystem(t)
 
@@ -312,7 +324,7 @@ func TestSaveDownloadedPackagesState(t *testing.T) {
 		createErr := fmt.Errorf("create error")
 		mockFS.On("Create", "state.txt").Return(nil, createErr).Once()
 
-		err := repo.SaveDownloadedPackagesState([]string{"pkg1"}, time.Now().UTC())
+		err := repo.SaveDownloadedPackagesState(onePkg, time.Now().UTC())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create file")
 		mockFS.AssertExpectations(t)
@@ -326,7 +338,7 @@ func TestSaveDownloadedPackagesState(t *testing.T) {
 		fw := &fakeWriter{failOnWrite: true}
 		mockFS.On("NewWriter", mockFile).Return(fw).Once()
 
-		err := repo.SaveDownloadedPackagesState([]string{"pkg1"}, time.Now().UTC())
+		err := repo.SaveDownloadedPackagesState(onePkg, time.Now().UTC())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to write sync date")
 		mockFS.AssertExpectations(t)
@@ -340,7 +352,7 @@ func TestSaveDownloadedPackagesState(t *testing.T) {
 		fw := &fakeWriter{failOnWritePkg: true}
 		// For this test, we simulate success for sync date then error on package.
 		mockFS.On("NewWriter", mockFile).Return(fw).Once()
-		err := repo.SaveDownloadedPackagesState([]string{"pkg1"}, time.Now().UTC())
+		err := repo.SaveDownloadedPackagesState(onePkg, time.Now().UTC())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to write package")
 		mockFS.AssertExpectations(t)
@@ -353,7 +365,7 @@ func TestSaveDownloadedPackagesState(t *testing.T) {
 		fw := &fakeWriter{failOnFlush: true}
 		mockFS.On("NewWriter", mockFile).Return(fw).Once()
 
-		err := repo.SaveDownloadedPackagesState([]string{"pkg1"}, time.Now().UTC())
+		err := repo.SaveDownloadedPackagesState(onePkg, time.Now().UTC())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to flush data")
 		mockFS.AssertExpectations(t)
@@ -367,9 +379,9 @@ func TestSaveDownloadedPackagesState(t *testing.T) {
 		mockFS.On("NewWriter", mockFile).Return(fw).Once()
 		syncTime := time.Now().UTC().Round(time.Second)
 
-		err := repo.SaveDownloadedPackagesState([]string{"pkg1", "pkg2"}, syncTime)
+		err := repo.SaveDownloadedPackagesState(twoPkgs, syncTime)
 		require.NoError(t, err)
-		expected := fmt.Sprintf("Last sync: %s\npkg1\npkg2\n", syncTime.Format(time.RFC3339))
+		expected := fmt.Sprintf("Last sync: %s\npkg1\npkg2|toto\n", syncTime.Format(time.RFC3339))
 		assert.Equal(t, expected, fw.content)
 		mockFS.AssertExpectations(t)
 	})

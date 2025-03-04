@@ -25,11 +25,11 @@ type LocalNpmState interface {
 	IncrementDownloadedCount()
 	GetAnalysedCount() int
 	IncrementAnalysedCount()
-	GetLastSync(packageName string) time.Time
+	GetLastSync(pkg RetrievePackage) time.Time
 	GetPackages() []RetrievePackage
-	SetState(packageName string, state int)
-	IsAnalysisNeeded(packageName string) bool
-	IsAnalysisStarted(packageName string) bool
+	SetState(pkg RetrievePackage, state int)
+	IsAnalysisNeeded(pkg RetrievePackage) bool
+	IsAnalysisStarted(pkg RetrievePackage) bool
 }
 
 type localNpmState struct {
@@ -43,10 +43,10 @@ type localNpmState struct {
 }
 
 // NewLocalNpmState initialize a new download state from the given versions.
-func NewLocalNpmState(packages []string, lastSync time.Time, logger logger.Logger) LocalNpmState {
+func NewLocalNpmState(packages []RetrievePackage, lastSync time.Time, logger logger.Logger) LocalNpmState {
 	states := make(map[string]int, len(packages))
 	for _, pkg := range packages {
-		states[pkg] = PreviouslyInLocalRepoState
+		states[pkg.String()] = PreviouslyInLocalRepoState
 	}
 
 	return &localNpmState{
@@ -59,11 +59,11 @@ func NewLocalNpmState(packages []string, lastSync time.Time, logger logger.Logge
 }
 
 // SetState updates the state of a package and its version.
-func (d *localNpmState) SetState(packageName string, state int) {
+func (d *localNpmState) SetState(pkg RetrievePackage, state int) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
-	d.states[packageName] = state
+	d.states[pkg.String()] = state
 }
 
 // GetDownloadedCount return the number of downloaded packages.
@@ -95,11 +95,11 @@ func (d *localNpmState) IncrementAnalysedCount() {
 }
 
 // GetLastSync returns the last sync date.
-func (d *localNpmState) GetLastSync(packageName string) time.Time {
+func (d *localNpmState) GetLastSync(pkg RetrievePackage) time.Time {
 	d.mutex.RLock()
 	defer d.mutex.RUnlock()
 
-	if _, ok := d.states[packageName]; !ok {
+	if _, ok := d.states[pkg.String()]; !ok {
 		return time.Time{}
 	}
 	return d.lastSync
@@ -112,25 +112,25 @@ func (d *localNpmState) GetPackages() []RetrievePackage {
 
 	packages := make([]RetrievePackage, 0, len(d.states))
 	for pkg := range d.states {
-		packages = append(packages, RetrievePackage{Name: pkg})
+		packages = append(packages, NewRetrievePackage(pkg))
 	}
 	return packages
 }
 
 // IsAnalysisNeeded returns true if the package needs to be analysed.
-func (d *localNpmState) IsAnalysisNeeded(packageName string) bool {
+func (d *localNpmState) IsAnalysisNeeded(pkg RetrievePackage) bool {
 	d.mutex.RLock()
 	defer d.mutex.RUnlock()
 
-	state, ok := d.states[packageName]
+	state, ok := d.states[pkg.String()]
 	return !ok || state != AnalysedState
 }
 
 // IsAnalysisStarted returns true if the package analysis has started.
-func (d *localNpmState) IsAnalysisStarted(packageName string) bool {
+func (d *localNpmState) IsAnalysisStarted(pkg RetrievePackage) bool {
 	d.mutex.RLock()
 	defer d.mutex.RUnlock()
 
-	state, ok := d.states[packageName]
+	state, ok := d.states[pkg.String()]
 	return ok && state != PreviouslyInLocalRepoState
 }

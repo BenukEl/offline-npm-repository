@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/npmoffline/internal/entities"
 	"github.com/npmoffline/internal/pkg/filesystem"
 )
 
@@ -18,8 +19,8 @@ import (
 type LocalNpmRepository interface {
 	WriteTarball(packageName, version string, reader io.ReadCloser) error
 	WritePackageJSON(packageName string, reader io.ReadCloser) (io.ReadCloser, error)
-	LoadDownloadedPackagesState() ([]string, time.Time, error)
-	SaveDownloadedPackagesState(packages []string, lastSync time.Time) error
+	LoadDownloadedPackagesState() ([]entities.RetrievePackage, time.Time, error)
+	SaveDownloadedPackagesState(packages []entities.RetrievePackage, lastSync time.Time) error
 }
 
 // localNpmRepo implements LocalNpmRepository.
@@ -97,19 +98,19 @@ func (r *localNpmRepo) WritePackageJSON(packageName string, reader io.ReadCloser
 // LoadDownloadedPackagesState loads the downloaded packages state from disk.
 // The state file format is expected to have the sync date in the first line,
 // prefixed with "Last sync: ", followed by one package name per line.
-func (r *localNpmRepo) LoadDownloadedPackagesState() ([]string, time.Time, error) {
+func (r *localNpmRepo) LoadDownloadedPackagesState() ([]entities.RetrievePackage, time.Time, error) {
 	file, err := r.fs.Open(r.stateFilePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// If the file does not exist, return an empty state.
-			return []string{}, time.Time{}, nil
+			return []entities.RetrievePackage{}, time.Time{}, nil
 		}
 		return nil, time.Time{}, fmt.Errorf("failed to open file %s: %w", r.stateFilePath, err)
 	}
 	defer file.Close()
 
 	scanner := r.fs.NewScanner(file)
-	var packages []string
+	var packages []entities.RetrievePackage
 	var lastSync time.Time
 
 	if scanner.Scan() {
@@ -131,7 +132,7 @@ func (r *localNpmRepo) LoadDownloadedPackagesState() ([]string, time.Time, error
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
-			packages = append(packages, line)
+			packages = append(packages, entities.NewRetrievePackage(line))
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -143,7 +144,7 @@ func (r *localNpmRepo) LoadDownloadedPackagesState() ([]string, time.Time, error
 
 // SaveDownloadedPackagesState saves the downloaded packages state to disk.
 // It writes the sync date on the first line and one package name per subsequent line.
-func (r *localNpmRepo) SaveDownloadedPackagesState(packages []string, lastSync time.Time) error {
+func (r *localNpmRepo) SaveDownloadedPackagesState(packages []entities.RetrievePackage, lastSync time.Time) error {
 	file, err := r.fs.Create(r.stateFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", r.stateFilePath, err)
@@ -158,7 +159,7 @@ func (r *localNpmRepo) SaveDownloadedPackagesState(packages []string, lastSync t
 	}
 	// Write each package name on a new line.
 	for _, pkg := range packages {
-		if _, err := writer.WriteString(pkg + "\n"); err != nil {
+		if _, err := writer.WriteString(pkg.String() + "\n"); err != nil {
 			return fmt.Errorf("failed to write package to file %s: %w", r.stateFilePath, err)
 		}
 	}

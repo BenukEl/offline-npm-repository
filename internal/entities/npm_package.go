@@ -19,6 +19,7 @@ type NpmPackage struct {
 type RetrievePackage struct {
 	Name              string
 	allowedPreVersion *regexp.Regexp
+	fullName          string
 }
 
 func NewRetrievePackage(name string) RetrievePackage {
@@ -29,9 +30,18 @@ func NewRetrievePackage(name string) RetrievePackage {
 		re, _ = regexp.Compile(parts[1])
 	}
 
+	nme := parts[0]
+	var fullName string
+	if re == nil {
+		fullName = nme
+	} else {
+		fullName = nme + "|" + re.String()
+	}
+
 	return RetrievePackage{
-		Name:              parts[0],
+		Name:              nme,
 		allowedPreVersion: re,
+		fullName:          fullName,
 	}
 }
 
@@ -41,4 +51,9 @@ func (r RetrievePackage) IsMatchingPreRelease(preRelease string) bool {
 		return false
 	}
 	return r.allowedPreVersion.MatchString(preRelease)
+}
+
+// String returns the package name with the regex.
+func (r RetrievePackage) String() string {
+	return r.fullName
 }

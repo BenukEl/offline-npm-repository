@@ -8,6 +8,7 @@ import (
 )
 
 func TestGetState_IsAnalysisNeeded(t *testing.T) {
+	pkg := NewRetrievePackage("pkg1|alpha")
 	t.Run("Not existing package", func(t *testing.T) {
 		ds := &localNpmState{
 			states:          make(map[string]int),
@@ -17,37 +18,38 @@ func TestGetState_IsAnalysisNeeded(t *testing.T) {
 		}
 
 		// For an unknown package, GetState should return NotStartedState and initialize it.
-		assert.True(t, ds.IsAnalysisNeeded("pkg1"))
+		assert.True(t, ds.IsAnalysisNeeded(pkg))
 
 		// A subsequent call should return the same state.
-		assert.True(t, ds.IsAnalysisNeeded("pkg1"))
+		assert.True(t, ds.IsAnalysisNeeded(pkg))
 	})
 
 	t.Run("Previously downloaded package", func(t *testing.T) {
 		ds := &localNpmState{
-			states:          map[string]int{"pkg1": PreviouslyInLocalRepoState},
+			states:          map[string]int{pkg.String(): PreviouslyInLocalRepoState},
 			logger:          logger.NewMockLogger(t),
 			downloadedCount: 0,
 			analysedCount:   0,
 		}
 
-		assert.True(t, ds.IsAnalysisNeeded("pkg1"))
+		assert.True(t, ds.IsAnalysisNeeded(pkg))
 	})
 
 	t.Run("Analysedd package", func(t *testing.T) {
 		ds := &localNpmState{
-			states:          map[string]int{"pkg1": AnalysedState},
+			states:          map[string]int{pkg.String(): AnalysedState},
 			logger:          logger.NewMockLogger(t),
 			downloadedCount: 0,
 			analysedCount:   0,
 		}
 
 		// For an unknown package, GetState should return NotStartedState and initialize it.
-		assert.False(t, ds.IsAnalysisNeeded("pkg1"))
+		assert.False(t, ds.IsAnalysisNeeded(pkg))
 	})
 }
 
 func TestGetState_IsAnalysisStarted(t *testing.T) {
+	pkg := NewRetrievePackage("pkg1|toto")
 	t.Run("Not existing package", func(t *testing.T) {
 		ds := &localNpmState{
 			states:          make(map[string]int),
@@ -57,33 +59,33 @@ func TestGetState_IsAnalysisStarted(t *testing.T) {
 		}
 
 		// For an unknown package, GetState should return NotStartedState and initialize it.
-		assert.False(t, ds.IsAnalysisStarted("pkg1"))
+		assert.False(t, ds.IsAnalysisStarted(pkg))
 
 		// A subsequent call should return the same state.
-		assert.False(t, ds.IsAnalysisStarted("pkg1"))
+		assert.False(t, ds.IsAnalysisStarted(pkg))
 	})
 
 	t.Run("Previously downloaded package", func(t *testing.T) {
 		ds := &localNpmState{
-			states:          map[string]int{"pkg1": PreviouslyInLocalRepoState},
+			states:          map[string]int{pkg.String(): PreviouslyInLocalRepoState},
 			logger:          logger.NewMockLogger(t),
 			downloadedCount: 0,
 			analysedCount:   0,
 		}
 
-		assert.False(t, ds.IsAnalysisStarted("pkg1"))
+		assert.False(t, ds.IsAnalysisStarted(pkg))
 	})
 
 	t.Run("Analysed package", func(t *testing.T) {
 		ds := &localNpmState{
-			states:          map[string]int{"pkg1": AnalysedState},
+			states:          map[string]int{pkg.String(): AnalysedState},
 			logger:          logger.NewMockLogger(t),
 			downloadedCount: 0,
 			analysedCount:   0,
 		}
 
 		// For an unknown package, GetState should return NotStartedState and initialize it.
-		assert.True(t, ds.IsAnalysisStarted("pkg1"))
+		assert.True(t, ds.IsAnalysisStarted(pkg))
 	})
 }
 
@@ -94,13 +96,13 @@ func TestSetStateAndGetState(t *testing.T) {
 		downloadedCount: 0,
 		analysedCount:   0,
 	}
-
-	assert.False(t, ds.IsAnalysisStarted("pkg1"))
+	pkg := NewRetrievePackage("pkg1|toto")
+	assert.False(t, ds.IsAnalysisStarted(pkg))
 
 	// Update the state and version for "pkg1".
-	ds.SetState("pkg1", AnalysingState)
+	ds.SetState(pkg, AnalysingState)
 
-	assert.True(t, ds.IsAnalysisStarted("pkg1"))
+	assert.True(t, ds.IsAnalysisStarted(pkg))
 
 }
 
@@ -145,11 +147,11 @@ func TestGetPackages(t *testing.T) {
 	assert.Empty(t, packages, "No packages should be returned initially")
 
 	// Add two packages with versions.
-	ds.SetState("pkg1", AnalysingState)
-	ds.SetState("pkg2", AnalysedState)
+	ds.SetState(NewRetrievePackage("pkg1"), AnalysingState)
+	ds.SetState(NewRetrievePackage("pkg2|"), AnalysedState)
 
 	packages = ds.GetPackages()
 	assert.Len(t, packages, 2, "Two packages should be returned")
-	assert.Contains(t, packages, RetrievePackage{Name: "pkg1"})
-	assert.Contains(t, packages, RetrievePackage{Name: "pkg2"})
+	assert.Contains(t, packages, RetrievePackage{Name: "pkg1", fullName: "pkg1", allowedPreVersion: nil})
+	assert.Contains(t, packages, RetrievePackage{Name: "pkg2", fullName: "pkg2", allowedPreVersion: nil})
 }

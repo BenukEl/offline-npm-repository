@@ -123,9 +123,5 @@ func (s *npmDownloadService) DownloadPackages(ctx context.Context, packageList [
 
 	// Save the download state.
 	pkgs := s.downloadState.GetPackages()
-	var pkgNames []string
-	for _, pkg := range pkgs {
-		pkgNames = append(pkgNames, pkg.Name)
-	}
-	s.localNpmRepo.SaveDownloadedPackagesState(pkgNames, s.startingDate)
+	s.localNpmRepo.SaveDownloadedPackagesState(pkgs, s.startingDate)
 }

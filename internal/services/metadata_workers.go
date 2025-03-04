@@ -85,7 +85,7 @@ func (f *metadataWorkerPool) WaitAllWorkers() {
 
 func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.RetrievePackage, analyzeChan chan entities.RetrievePackage, downloadChan chan entities.NpmPackage, workerID int) error {
 	// Avoid processing the package if already processed.
-	if !f.localNpmState.IsAnalysisNeeded(pkg.Name) {
+	if !f.localNpmState.IsAnalysisNeeded(pkg) {
 		f.logger.Debug("Package %s already processed", pkg.Name)
 		return nil
 	}
@@ -121,21 +121,23 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 
 		// Enqueue dependencies and peer dependencies for metadata retrieval.
 		for _, dep := range pkg.Dependencies {
-			if !f.localNpmState.IsAnalysisStarted(dep) {
-				f.localNpmState.SetState(dep, entities.AnalysingState)
-				analyzeChan <- entities.NewRetrievePackage(dep)
+			depPkg := entities.NewRetrievePackage(dep)
+			if !f.localNpmState.IsAnalysisStarted(depPkg) {
+				f.localNpmState.SetState(depPkg, entities.AnalysingState)
+				analyzeChan <- depPkg
 			}
 		}
 		for _, dep := range pkg.PeerDeps {
-			if !f.localNpmState.IsAnalysisStarted(dep) {
-				f.localNpmState.SetState(dep, entities.AnalysingState)
-				analyzeChan <- entities.NewRetrievePackage(dep)
+			depPkg := entities.NewRetrievePackage(dep)
+			if !f.localNpmState.IsAnalysisStarted(depPkg) {
+				f.localNpmState.SetState(depPkg, entities.AnalysingState)
+				analyzeChan <- depPkg
 			}
 		}
 	}
 
 	f.logger.Debug("[meta_#%d] Processed package %s... %d versions to download", workerID, pkg.Name, len(filteredPackages))
-	f.localNpmState.SetState(pkg.Name, entities.AnalysedState)
+	f.localNpmState.SetState(pkg, entities.AnalysedState)
 	f.localNpmState.IncrementAnalysedCount()
 
 	return nil
@@ -143,7 +145,7 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 
 // filterPackages filtre pre-release versions and versions that are less than the last version.
 func (f *metadataWorkerPool) filterPackages(npmPackages []entities.NpmPackage, retrievePkg entities.RetrievePackage) []entities.NpmPackage {
-	lastSyncDate := f.localNpmState.GetLastSync(retrievePkg.Name)
+	lastSyncDate := f.localNpmState.GetLastSync(retrievePkg)
 	var filtered []entities.NpmPackage
 	for _, npmPkg := range npmPackages {
 		if npmPkg.Version.IsPreRelease() && !retrievePkg.IsMatchingPreRelease(npmPkg.Version.PreRelease) {
