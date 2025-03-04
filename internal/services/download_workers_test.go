@@ -18,7 +18,7 @@ import (
 
 func TestTarballWorkerPool_StartWorker(t *testing.T) {
 	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockFileRepository(t)
+	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
@@ -121,7 +121,7 @@ func TestTarballWorkerPool_StartWorker(t *testing.T) {
 
 func TestTarballWorkerPool_WaitAllWorkers(t *testing.T) {
 	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockFileRepository(t)
+	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
@@ -166,7 +166,7 @@ func TestTarballWorkerPool_downloadTarball(t *testing.T) {
 	}
 
 	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockFileRepository(t)
+	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 

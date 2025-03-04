@@ -3,15 +3,17 @@ package entities
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 type NpmPackage struct {
-	Name         string   `json:"name"`
-	Version      SemVer   `json:"version"`
-	Dependencies []string `json:"dependencies"`
-	PeerDeps     []string `json:"peerDeps"`
-	Integrity    string   `json:"integrity"`
-	Url          string   `json:"url"`
+	Name         string    `json:"name"`
+	Version      SemVer    `json:"version"`
+	Dependencies []string  `json:"dependencies"`
+	PeerDeps     []string  `json:"peerDeps"`
+	Integrity    string    `json:"integrity"`
+	Url          string    `json:"url"`
+	ReleaseDate  time.Time `json:"releaseDate"`
 }
 
 type RetrievePackage struct {

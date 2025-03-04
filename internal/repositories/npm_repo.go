@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/npmoffline/internal/entities"
 	"github.com/npmoffline/internal/pkg/httpclient"
@@ -29,7 +30,9 @@ type NpmPackageMetadata struct {
 	Dist         Dist              `json:"dist"`
 }
 
-func (m *NpmPackageMetadata) ToNpmPackage() (entities.NpmPackage, error) {
+// ToNpmPackage converts the metadata to an NpmPackage entity.
+// The date parameter is used to set the release date of the package.
+func (m *NpmPackageMetadata) ToNpmPackage(date time.Time) (entities.NpmPackage, error) {
 	version, err := entities.NewSemVer(m.Version)
 	if err != nil {
 		return entities.NpmPackage{}, fmt.Errorf("failed to convert version: %w", err)
@@ -49,6 +52,7 @@ func (m *NpmPackageMetadata) ToNpmPackage() (entities.NpmPackage, error) {
 	return entities.NpmPackage{
 		Name:         m.Name,
 		Version:      version,
+		ReleaseDate:  date,
 		Dependencies: deps,
 		PeerDeps:     peerDeps,
 		Integrity:    m.Dist.Integrity,
@@ -62,6 +66,7 @@ type NpmResponse struct {
 	Rev      string                        `json:"_rev"`
 	Name     string                        `json:"name"`
 	Versions map[string]NpmPackageMetadata `json:"versions"`
+	Time     map[string]time.Time          `json:"time"`
 }
 
 type NpmRepository interface {
@@ -102,20 +107,6 @@ func (r *npmRepository) FetchMetadata(ctx context.Context, packageName string) (
 		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
-	// var metadata NpmResponse
-	// if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-	// 	return nil, fmt.Errorf("failed to decode response: %w", err)
-	// }
-
-	// var packages []entities.NpmPackage
-	// for _, version := range metadata.Versions {
-	// 	pkg, err := version.ToNpmPackage()
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("failed to convert metadata: %w", err)
-	// 	}
-	// 	packages = append(packages, pkg)
-	// }
-
 	return resp.Body, nil
 }
 
@@ -143,8 +134,8 @@ func (r *npmRepository) DecodeNpmPackages(reader io.Reader) ([]entities.NpmPacka
 	}
 
 	var packages []entities.NpmPackage
-	for _, version := range metadata.Versions {
-		pkg, err := version.ToNpmPackage()
+	for _, releasedPackage := range metadata.Versions {
+		pkg, err := releasedPackage.ToNpmPackage(metadata.Time[releasedPackage.Version])
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert metadata: %w", err)
 		}

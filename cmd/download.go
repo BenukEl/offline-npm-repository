@@ -92,7 +92,7 @@ You can combine these flags and arguments in a single command.`,
 		httpCli := httpclient.NewHttpClient(http.DefaultClient)
 		fs := filesystem.NewOsFileSystem()
 		npmRepo := repositories.NewNpmRepository("https://registry.npmjs.org", httpCli, log)
-		fileRepo := repositories.NewFileRepository(downloadDest, fs, downloadStateFile)
+		fileRepo := repositories.NewLocalNpmRepository(downloadDest, fs, downloadStateFile)
 
 		serv := services.NewNpmDownloadService(npmRepo, fileRepo, log)
 

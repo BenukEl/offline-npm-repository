@@ -6,6 +6,7 @@ import (
 	"os"
 )
 
+// Reader interface wrappe bufio.Reader.
 type Reader interface {
 	ReadString(delim byte) (string, error)
 }
@@ -18,6 +19,7 @@ func (r *reader) ReadString(delim byte) (string, error) {
 	return r.reader.ReadString('\n')
 }
 
+// Writer interface wrappe bufio.Writer.
 type Writer interface {
 	WriteString(s string) (n int, err error)
 	Flush() error
@@ -35,7 +37,30 @@ func (w *writer) Flush() error {
 	return w.writer.Flush()
 }
 
-// FileSystem is an abstraction for file system operations.
+// Scanner interface wrappe bufio.Scanner.
+type Scanner interface {
+	Scan() bool
+	Text() string
+	Err() error
+}
+
+type scanner struct {
+	scanner *bufio.Scanner
+}
+
+func (s *scanner) Scan() bool {
+	return s.scanner.Scan()
+}
+
+func (s *scanner) Text() string {
+	return s.scanner.Text()
+}
+
+func (s *scanner) Err() error {
+	return s.scanner.Err()
+}
+
+// FileSystem est une abstraction pour les opérations sur le système de fichiers.
 type FileSystem interface {
 	MkdirAll(path string, perm os.FileMode) error
 	Open(name string) (*os.File, error)
@@ -44,6 +69,7 @@ type FileSystem interface {
 	TeeReader(r io.Reader, w io.Writer) io.Reader
 	NewReader(file io.Reader) Reader
 	NewWriter(file io.Writer) Writer
+	NewScanner(file io.Reader) Scanner
 }
 
 type osFileSystem struct{}
@@ -78,4 +104,8 @@ func (fs *osFileSystem) NewReader(file io.Reader) Reader {
 
 func (fs *osFileSystem) NewWriter(file io.Writer) Writer {
 	return &writer{writer: bufio.NewWriter(file)}
+}
+
+func (fs *osFileSystem) NewScanner(file io.Reader) Scanner {
+	return &scanner{scanner: bufio.NewScanner(file)}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/npmoffline/internal/repositories"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // for our tests, we use a low timeout value for worker inactivity.
@@ -21,7 +22,7 @@ var mockWorkerInactivityTime = 50 * time.Millisecond
 
 func TestMetadataWorkerPool_StartWorker(t *testing.T) {
 	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockFileRepository(t)
+	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
@@ -103,7 +104,7 @@ func TestMetadataWorkerPool_StartWorker(t *testing.T) {
 		mockLogger.On("Debug", mock.Anything, mock.Anything, mock.Anything).Times(3)
 		mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Times(2)
 
-		mockLocalState.On("GetState", mock.Anything).Return(entities.NotStartedState).Times(2)
+		mockLocalState.On("IsAnalysisNeeded", mock.Anything).Return(true).Once()
 		mockRemoteRepo.On("FetchMetadata", mock.Anything, mock.Anything).Return(nil, assert.AnError).Once()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -121,7 +122,7 @@ func TestMetadataWorkerPool_StartWorker(t *testing.T) {
 
 func TestMetadataWorkerPool_WaitAllWorkers(t *testing.T) {
 	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockFileRepository(t)
+	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
@@ -168,7 +169,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 	workerID := 1
 
 	mockLogger := logger.NewMockLogger(t)
-	mockLocalRepo := repositories.NewMockFileRepository(t)
+	mockLocalRepo := repositories.NewMockLocalNpmRepository(t)
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
@@ -182,7 +183,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 	t.Run("Skip processing if already processed", func(t *testing.T) {
 		// Ack
-		mockLocalState.On("GetState", packageName).Return(entities.AnalysedState).Times(2)
+		mockLocalState.On("IsAnalysisNeeded", packageName).Return(false).Once()
 		mockLogger.On("Debug", "Package %s already processed", packageName).Once()
 
 		ctx := context.Background()
@@ -200,7 +201,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 	t.Run("Error in FetchMetadata", func(t *testing.T) {
 		// Ack
-		mockLocalState.On("GetState", packageName).Return(entities.NotStartedState).Times(2)
+		mockLocalState.On("IsAnalysisNeeded", packageName).Return(true).Once()
 		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
 		mockLogger.On("Error", "Failed to fetch metadata for %s: %w", packageName, mock.Anything).Once()
 
@@ -222,7 +223,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 	t.Run("Error in WritePackageJSON", func(t *testing.T) {
 		// Ack
-		mockLocalState.On("GetState", packageName).Return(entities.NotStartedState).Times(2)
+		mockLocalState.On("IsAnalysisNeeded", packageName).Return(true).Once()
 		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
 
 		dummyData := "dummy metadata"
@@ -247,7 +248,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 	t.Run("Error in DecodeNpmPackages", func(t *testing.T) {
 		// Ack
-		mockLocalState.On("GetState", packageName).Return(entities.NotStartedState).Times(2)
+		mockLocalState.On("IsAnalysisNeeded", packageName).Return(true).Once()
 		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
 
 		dummyData := "dummy metadata"
@@ -276,9 +277,8 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 	t.Run("Successful processing without dependencies", func(t *testing.T) {
 		// Ack
 		mockLogger.On("IsDebug").Return(true).Once()
-		mockLocalState.On("GetState", packageName).Return(entities.NotStartedState).Times(2)
-		initialVersion := entities.SemVer{Major: 0, Minor: 0, Patch: 0}
-		mockLocalState.On("GetLastVersion", packageName).Return(initialVersion).Once()
+		mockLocalState.On("IsAnalysisNeeded", mock.Anything).Return(true).Once()
+		mockLocalState.On("GetLastSync", packageName).Return(time.Time{}).Once()
 
 		dummyData := "dummy metadata"
 		reader := io.NopCloser(strings.NewReader(dummyData))
@@ -292,14 +292,15 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 			Version:      entities.SemVer{Major: 1, Minor: 0, Patch: 0},
 			Dependencies: []string{},
 			PeerDeps:     []string{},
+			ReleaseDate:  time.Now(),
 		}
 		mockRemoteRepo.On("DecodeNpmPackages", teeReader).Return([]entities.NpmPackage{pkg}, nil).Once()
 
 		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
 		mockLogger.On("Debug", "[meta_#%d] Enqueueing package %s:%s for download", workerID, pkg.Name, pkg.Version.String()).Once()
-		mockLogger.On("Debug", "[meta_#%d] Processed package %s... %d versions to download (latest: %s)", workerID, packageName, 1, pkg.Version).Once()
+		mockLogger.On("Debug", "[meta_#%d] Processed package %s... %d versions to download", workerID, packageName, 1).Once()
 
-		mockLocalState.On("SetState", packageName, entities.AnalysedState, &pkg.Version).Once()
+		mockLocalState.On("SetState", packageName, entities.AnalysedState).Once()
 		mockLocalState.On("IncrementAnalysedCount").Once()
 
 		ctx := context.Background()
@@ -327,9 +328,8 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		// Ack
 		mockLogger.On("IsDebug").Return(true).Once()
 
-		mockLocalState.On("GetState", mock.Anything).Return(entities.NotStartedState).Times(2)
-		initialVersion := entities.SemVer{Major: 0, Minor: 0, Patch: 0}
-		mockLocalState.On("GetLastVersion", packageName).Return(initialVersion).Once()
+		mockLocalState.On("IsAnalysisNeeded", packageName).Return(true).Once()
+		mockLocalState.On("GetLastSync", packageName).Return(time.Time{}).Once()
 
 		dummyData := "dummy metadata"
 		reader := io.NopCloser(strings.NewReader(dummyData))
@@ -343,20 +343,21 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 			Version:      entities.SemVer{Major: 2, Minor: 0, Patch: 0},
 			Dependencies: []string{"dep1"},
 			PeerDeps:     []string{"peer1"},
+			ReleaseDate:  time.Now(),
 		}
 		mockRemoteRepo.On("DecodeNpmPackages", teeReader).Return([]entities.NpmPackage{pkg}, nil).Once()
 
 		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
 		mockLogger.On("Debug", "[meta_#%d] Enqueueing package %s:%s for download", workerID, pkg.Name, pkg.Version.String()).Once()
-		mockLogger.On("Debug", "[meta_#%d] Processed package %s... %d versions to download (latest: %s)", workerID, packageName, 1, pkg.Version).Once()
+		mockLogger.On("Debug", "[meta_#%d] Processed package %s... %d versions to download", workerID, packageName, 1).Once()
 
-		mockLocalState.On("SetState", packageName, entities.AnalysedState, &pkg.Version).Once()
+		mockLocalState.On("SetState", packageName, entities.AnalysedState).Once()
 		mockLocalState.On("IncrementAnalysedCount").Once()
 
-		mockLocalState.On("GetState", "dep1").Return(entities.NotStartedState).Once()
-		mockLocalState.On("SetState", "dep1", entities.AnalysingState, (*entities.SemVer)(nil)).Once()
-		mockLocalState.On("GetState", "peer1").Return(entities.NotStartedState).Once()
-		mockLocalState.On("SetState", "peer1", entities.AnalysingState, (*entities.SemVer)(nil)).Once()
+		mockLocalState.On("IsAnalysisStarted", "dep1").Return(false).Once()
+		mockLocalState.On("SetState", "dep1", entities.AnalysingState).Once()
+		mockLocalState.On("IsAnalysisStarted", "peer1").Return(false).Once()
+		mockLocalState.On("SetState", "peer1", entities.AnalysingState).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)
@@ -387,72 +388,121 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 }
 
 func TestMetadataWorkerPool_FilterPackages(t *testing.T) {
+	// Création du mock pour localNpmState
 	mockLocalState := entities.NewMockLocalNpmState(t)
-
 	pool := &metadataWorkerPool{
 		localNpmState: mockLocalState,
 	}
 
-	toPkg := func(name string, version string) entities.NpmPackage {
-		ver, _ := entities.NewSemVer(version)
-
+	// Fonction d'aide pour créer un package avec une date de publication donnée
+	toPkg := func(name, version string, releaseDate time.Time) entities.NpmPackage {
+		ver, err := entities.NewSemVer(version)
+		require.NoError(t, err)
 		return entities.NpmPackage{
-			Name:    name,
-			Version: ver,
+			Name:        name,
+			Version:     ver,
+			ReleaseDate: releaseDate,
 		}
 	}
 
+	// Date de référence pour le dernier sync
+	baseSync := time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)
+
 	t.Run("Empty input returns empty slice", func(t *testing.T) {
-		lastVersion := entities.SemVer{Major: 1, Minor: 0, Patch: 0, PreRelease: ""}
-		mockLocalState.On("GetLastVersion", mock.Anything).Return(lastVersion).Once()
+		mockLocalState.On("GetLastSync", mock.Anything).Return(baseSync).Once()
+		var pkgs []entities.NpmPackage
 
-		var packages []entities.NpmPackage
-
-		filtered := pool.filterPackages(packages, entities.RetrievePackage{})
+		filtered := pool.filterPackages(pkgs, entities.RetrievePackage{})
 		assert.Empty(t, filtered, "Aucun package ne doit être retourné pour une entrée vide")
+		mockLocalState.AssertExpectations(t)
 	})
 
-	t.Run("Excludes pre-release and packages not greater than lastVersion", func(t *testing.T) {
-		lastVersion := entities.SemVer{Major: 1, Minor: 0, Patch: 0, PreRelease: ""}
-		mockLocalState.On("GetLastVersion", mock.Anything).Return(lastVersion).Once()
-
-		packages := []entities.NpmPackage{
-			toPkg("pkg", "0.9.9"),
-			toPkg("pkg", "1.0.0"),
-			toPkg("pkg", "1.1.0"),
-			toPkg("pkg", "2.0.0-beta"),
-			toPkg("pkg", "1.2.0"),
+	t.Run("Excludes packages with release date not after last sync", func(t *testing.T) {
+		// Pour le nom "pkg", on renvoie baseSync
+		mockLocalState.On("GetLastSync", "pkg").Return(baseSync).Once()
+		pkgs := []entities.NpmPackage{
+			// Date égale à baseSync : non considérée comme postérieure
+			toPkg("pkg", "1.0.0", baseSync),
+			// Date avant baseSync
+			toPkg("pkg", "1.0.1", baseSync.Add(-time.Hour)),
 		}
 
-		filtered := pool.filterPackages(packages, entities.RetrievePackage{})
-
-		assert.Len(t, filtered, 2, "Deux packages devraient être retournés")
-		versions := []string{filtered[0].Version.String(), filtered[1].Version.String()}
-		assert.Contains(t, versions, "1.1.0", "The verison 1.1.0 should be included")
-		assert.Contains(t, versions, "1.2.0", "The verison 1.2.0 should be included")
+		filtered := pool.filterPackages(pkgs, entities.RetrievePackage{Name: "pkg"})
+		assert.Empty(t, filtered, "Aucun package ne doit être retourné si la date de publication n'est pas après le dernier sync")
+		mockLocalState.AssertExpectations(t)
 	})
 
-	t.Run("Includeds pre-release matching with RetievePackage regex", func(t *testing.T) {
-		lastVersion := entities.SemVer{Major: 1, Minor: 0, Patch: 0, PreRelease: ""}
-		mockLocalState.On("GetLastVersion", mock.Anything).Return(lastVersion).Once()
-
-		packages := []entities.NpmPackage{
-			toPkg("pkg", "0.9.9"),
-			toPkg("pkg", "1.0.1-0"),
-			toPkg("pkg", "1.1.0-rc"),
-			toPkg("pkg", "2.0.0"),
-			toPkg("pkg", "1.2.0-3"),
+	t.Run("Excludes non-matching pre-release versions", func(t *testing.T) {
+		// Pour ce test, aucun pré-release ne doit être accepté
+		mockLocalState.On("GetLastSync", "pkg").Return(baseSync).Once()
+		// Ici, retrievePkg n'accepte pas (regex vide ou non-correspondant) les pré-release
+		retrievePkg := entities.NewRetrievePackage("pkg")
+		pkgs := []entities.NpmPackage{
+			// Version pré-release "alpha" avec date postérieure
+			toPkg("pkg", "1.0.1-alpha", baseSync.Add(time.Hour)),
 		}
 
-		filtered := pool.filterPackages(packages, entities.NewRetrievePackage("pkg|\\d"))
+		filtered := pool.filterPackages(pkgs, retrievePkg)
+		assert.Empty(t, filtered, "Les versions pré-release non correspondantes doivent être exclues")
+		mockLocalState.AssertExpectations(t)
+	})
 
-		assert.Len(t, filtered, 3, "Two packages should be returned")
+	t.Run("Includes matching pre-release versions", func(t *testing.T) {
+		// Ici, retrievePkg accepte les versions pré-release contenant "alpha"
+		mockLocalState.On("GetLastSync", "pkg").Return(baseSync).Once()
+		retrievePkg := entities.NewRetrievePackage("pkg|alpha")
+		pkgs := []entities.NpmPackage{
+			toPkg("pkg", "1.0.1-alpha", baseSync.Add(time.Hour)),
+		}
+
+		filtered := pool.filterPackages(pkgs, retrievePkg)
+		assert.Len(t, filtered, 1, "La version pré-release correspondante doit être incluse")
+		assert.Equal(t, "1.0.1-alpha", filtered[0].Version.String())
+		mockLocalState.AssertExpectations(t)
+	})
+
+	t.Run("Includes non pre-release versions regardless of retrievePkg", func(t *testing.T) {
+		// Les versions stables doivent être incluses si leur date de publication est après le dernier sync
+		mockLocalState.On("GetLastSync", "pkg").Return(baseSync).Once()
+		// Même si la regex de retrievePkg ne concerne que les pré-release, cela n'affecte pas les versions stables
+		retrievePkg := entities.NewRetrievePackage("pkg|anything")
+		pkgs := []entities.NpmPackage{
+			toPkg("pkg", "1.2.0", baseSync.Add(2*time.Hour)),
+		}
+
+		filtered := pool.filterPackages(pkgs, retrievePkg)
+		assert.Len(t, filtered, 1, "La version stable doit être incluse si la date de publication est après le dernier sync")
+		assert.Equal(t, "1.2.0", filtered[0].Version.String())
+		mockLocalState.AssertExpectations(t)
+	})
+
+	t.Run("Mixed packages filtering", func(t *testing.T) {
+		// Test mixte avec plusieurs packages
+		mockLocalState.On("GetLastSync", "pkg").Return(baseSync).Once()
+		// Ici, retrievePkg n'accepte que les pré-release contenant "beta"
+		retrievePkg := entities.NewRetrievePackage("pkg|beta")
+		pkgs := []entities.NpmPackage{
+			// Version stable postérieure
+			toPkg("pkg", "1.0.0", baseSync.Add(2*time.Hour)),
+			// Version pré-release "beta" (correspond) postérieure
+			toPkg("pkg", "1.1.0-beta", baseSync.Add(3*time.Hour)),
+			// Version pré-release "rc" (ne correspond pas) postérieure
+			toPkg("pkg", "1.2.0-rc", baseSync.Add(4*time.Hour)),
+			// Version stable antérieure : à exclure
+			toPkg("pkg", "1.3.0", baseSync.Add(-time.Hour)),
+			// Version stable avec date égale à baseSync : à exclure
+			toPkg("pkg", "1.4.0", baseSync),
+		}
+
+		filtered := pool.filterPackages(pkgs, retrievePkg)
+		// Seules "1.0.0" et "1.1.0-beta" doivent être retenues
+		assert.Len(t, filtered, 2, "Seules les versions valides doivent être incluses")
 		var versions []string
 		for _, pkg := range filtered {
 			versions = append(versions, pkg.Version.String())
 		}
-		assert.Contains(t, versions, "1.0.1-0", "The verison 1.0.1-0 should be included")
-		assert.Contains(t, versions, "2.0.0", "The verison 2.0.0 should be included")
-		assert.Contains(t, versions, "1.2.0-3", "The verison 1.2.0-3 should be included")
+		assert.Contains(t, versions, "1.0.0")
+		assert.Contains(t, versions, "1.1.0-beta")
+		mockLocalState.AssertExpectations(t)
 	})
 }

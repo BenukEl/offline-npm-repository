@@ -28,28 +28,30 @@ type NpmDownloadService interface {
 
 type npmDownloadService struct {
 	npmRepo            repositories.NpmRepository
-	fileRepo           repositories.FileRepository
+	localNpmRepo       repositories.LocalNpmRepository
 	logger             logger.Logger
 	downloadState      entities.LocalNpmState
+	startingDate       time.Time
 	metadataWorkerPool MetadataWorkerPool
 	tarballWorkerPool  TarballWorkerPool
 }
 
 // NewNpmDownloadService creates a new instance of the download service.
-func NewNpmDownloadService(npmRepo repositories.NpmRepository, fileRepo repositories.FileRepository, log logger.Logger) *npmDownloadService {
-	fromVersions, err := fileRepo.LoadOrCreateDownloadState()
+func NewNpmDownloadService(npmRepo repositories.NpmRepository, fileRepo repositories.LocalNpmRepository, log logger.Logger) *npmDownloadService {
+	packages, lastSync, err := fileRepo.LoadDownloadedPackagesState()
 	if err != nil {
 		log.Error("Failed to load downloaded versions: %w", err)
-		fromVersions = make(map[string]entities.SemVer)
+		return nil
 	}
 
-	state := entities.NewLocalNpmState(fromVersions, log)
+	state := entities.NewLocalNpmState(packages, lastSync, log)
 
 	return &npmDownloadService{
 		npmRepo:            npmRepo,
-		fileRepo:           fileRepo,
+		localNpmRepo:       fileRepo,
 		logger:             log,
 		downloadState:      state,
+		startingDate:       time.Now().UTC(),
 		metadataWorkerPool: NewMetadataWorkerPool(log, fileRepo, npmRepo, state),
 		tarballWorkerPool:  NewTarballdWorkerPool(log, fileRepo, npmRepo, state),
 	}
@@ -120,5 +122,10 @@ func (s *npmDownloadService) DownloadPackages(ctx context.Context, packageList [
 	ticker.Stop()
 
 	// Save the download state.
-	s.fileRepo.SaveDownloadedVersions(s.downloadState.GetVersions())
+	pkgs := s.downloadState.GetPackages()
+	var pkgNames []string
+	for _, pkg := range pkgs {
+		pkgNames = append(pkgNames, pkg.Name)
+	}
+	s.localNpmRepo.SaveDownloadedPackagesState(pkgNames, s.startingDate)
 }

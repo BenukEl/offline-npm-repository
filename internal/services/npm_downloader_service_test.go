@@ -15,7 +15,7 @@ import (
 func TestNpmDownloadService_DownloadPackages(t *testing.T) {
 	// Create mocks for dependencies.
 	mockNpmRepo := repositories.NewMockNpmRepository(t)
-	mockFileRepo := repositories.NewMockFileRepository(t)
+	mockLocalNpmRepo := repositories.NewMockLocalNpmRepository(t)
 	mockLogger := logger.NewMockLogger(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 	mockMetadataPool := NewMockMetadataWorkerPool(t)
@@ -23,16 +23,17 @@ func TestNpmDownloadService_DownloadPackages(t *testing.T) {
 
 	service := &npmDownloadService{
 		npmRepo:            mockNpmRepo,
-		fileRepo:           mockFileRepo,
+		localNpmRepo:       mockLocalNpmRepo,
 		logger:             mockLogger,
 		downloadState:      mockLocalState,
 		metadataWorkerPool: mockMetadataPool,
 		tarballWorkerPool:  mockTarballPool,
+		startingDate:       time.Now().UTC(),
 	}
 
 	t.Run("Download packages with cancelled context", func(t *testing.T) {
-		mockLocalState.On("GetVersions").Return(make(map[string]entities.SemVer)).Once()
-		mockFileRepo.On("SaveDownloadedVersions", mock.Anything).Return(nil).Once()
+		mockLocalState.On("GetPackages").Return([]entities.RetrievePackage{}).Once()
+		mockLocalNpmRepo.On("SaveDownloadedPackagesState", mock.Anything, mock.Anything).Return(nil).Once()
 
 		mockLogger.On("Info", mock.Anything).Return().Times(4)
 
@@ -53,18 +54,17 @@ func TestNpmDownloadService_DownloadPackages(t *testing.T) {
 		// Give a short time for the service to exit.
 		time.Sleep(100 * time.Millisecond)
 
-		// Verify that SaveDownloadedVersions was called.
-		mockFileRepo.AssertCalled(t, "SaveDownloadedVersions", mock.Anything)
+		// Verify that SaveDownloadedPackagesState was called.
+		mockLocalNpmRepo.AssertCalled(t, "SaveDownloadedPackagesState", mock.Anything, mock.Anything)
 
 	})
 
 	t.Run("Download packages with update local repository", func(t *testing.T) {
 
 		expectedStatePkgs := []entities.RetrievePackage{{Name: "statePkg1"}, {Name: "statePkg2"}}
-		mockLocalState.On("GetPackages").Return(expectedStatePkgs).Once()
+		mockLocalState.On("GetPackages").Return(expectedStatePkgs).Times(2)
 
-		mockLocalState.On("GetVersions").Return(make(map[string]entities.SemVer)).Once()
-		mockFileRepo.On("SaveDownloadedVersions", mock.Anything).Return(nil).Once()
+		mockLocalNpmRepo.On("SaveDownloadedPackagesState", mock.Anything, mock.Anything).Return(nil).Once()
 
 		mockLogger.On("Info", mock.Anything).Return().Times(5)
 		var packageChannel chan entities.RetrievePackage
@@ -91,13 +91,13 @@ func TestNpmDownloadService_DownloadPackages(t *testing.T) {
 		assert.Equal(t, 3, len(packageChannel))
 		// Assert that GetPackages was called on local state.
 		mockLocalState.AssertCalled(t, "GetPackages")
-		// Assert that SaveDownloadedVersions was called.
-		mockFileRepo.AssertCalled(t, "SaveDownloadedVersions", mock.Anything)
+		// Assert that SaveDownloadedPackagesState was called.
+		mockLocalNpmRepo.AssertCalled(t, "SaveDownloadedPackagesState", mock.Anything, mock.Anything)
 	})
 
 	t.Run("starts same worker number as option say", func(t *testing.T) {
-		mockLocalState.On("GetVersions").Return(make(map[string]entities.SemVer)).Once()
-		mockFileRepo.On("SaveDownloadedVersions", mock.Anything).Return(nil).Once()
+		mockLocalState.On("GetPackages").Return([]entities.RetrievePackage{}).Once()
+		mockLocalNpmRepo.On("SaveDownloadedPackagesState", mock.Anything, mock.Anything).Return(nil).Once()
 
 		mockLogger.On("Info", mock.Anything).Return().Times(4)
 
@@ -119,8 +119,8 @@ func TestNpmDownloadService_DownloadPackages(t *testing.T) {
 			UpdateLocalRepository: false,
 		})
 
-		// Assert that SaveDownloadedVersions was called.
-		mockFileRepo.AssertCalled(t, "SaveDownloadedVersions", mock.Anything)
+		// Assert that SaveDownloadedPackagesState was called.
+		mockLocalNpmRepo.AssertCalled(t, "SaveDownloadedPackagesState", mock.Anything, mock.Anything)
 
 	})
 }

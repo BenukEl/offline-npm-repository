@@ -20,13 +20,13 @@ type TarballWorkerPool interface {
 type tarballWorkerPool struct {
 	logger        logger.Logger
 	wg            *sync.WaitGroup
-	localNpmRepo  repositories.FileRepository
+	localNpmRepo  repositories.LocalNpmRepository
 	remoteNpmRepo repositories.NpmRepository
 	localNpmState entities.LocalNpmState
 }
 
 // NewTarballdWorkerPool creates a new instance of DownloadWorkerFactory.
-func NewTarballdWorkerPool(logger logger.Logger, localNpmRepo repositories.FileRepository, remoteNpmRepo repositories.NpmRepository, localNpmState entities.LocalNpmState) TarballWorkerPool {
+func NewTarballdWorkerPool(logger logger.Logger, localNpmRepo repositories.LocalNpmRepository, remoteNpmRepo repositories.NpmRepository, localNpmState entities.LocalNpmState) TarballWorkerPool {
 	return &tarballWorkerPool{
 		logger:        logger,
 		wg:            &sync.WaitGroup{},

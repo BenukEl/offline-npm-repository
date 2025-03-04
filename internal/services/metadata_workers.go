@@ -21,13 +21,13 @@ type MetadataWorkerPool interface {
 type metadataWorkerPool struct {
 	logger        logger.Logger
 	wg            *sync.WaitGroup
-	localNpmRepo  repositories.FileRepository
+	localNpmRepo  repositories.LocalNpmRepository
 	remoteNpmRepo repositories.NpmRepository
 	localNpmState entities.LocalNpmState
 }
 
 // NewMetadataWorkerPool creates a new instance of MetadataWorker.
-func NewMetadataWorkerPool(logger logger.Logger, localNpmRepo repositories.FileRepository, remoteNpmRepo repositories.NpmRepository, localNpmState entities.LocalNpmState) MetadataWorkerPool {
+func NewMetadataWorkerPool(logger logger.Logger, localNpmRepo repositories.LocalNpmRepository, remoteNpmRepo repositories.NpmRepository, localNpmState entities.LocalNpmState) MetadataWorkerPool {
 	return &metadataWorkerPool{
 		logger:        logger,
 		wg:            &sync.WaitGroup{},
@@ -85,7 +85,7 @@ func (f *metadataWorkerPool) WaitAllWorkers() {
 
 func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.RetrievePackage, analyzeChan chan entities.RetrievePackage, downloadChan chan entities.NpmPackage, workerID int) error {
 	// Avoid processing the package if already processed.
-	if f.localNpmState.GetState(pkg.Name) != entities.AnalysingState && f.localNpmState.GetState(pkg.Name) != entities.NotStartedState {
+	if !f.localNpmState.IsAnalysisNeeded(pkg.Name) {
 		f.logger.Debug("Package %s already processed", pkg.Name)
 		return nil
 	}
@@ -111,11 +111,7 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 
 	filteredPackages := f.filterPackages(packages, pkg)
 
-	var highestVersion entities.SemVer
 	for _, pkg := range filteredPackages {
-		if pkg.Version.Compare(highestVersion) > 0 {
-			highestVersion = pkg.Version
-		}
 
 		if f.logger.IsDebug() {
 			f.logger.Debug("[meta_#%d] Enqueueing package %s:%s for download", workerID, pkg.Name, pkg.Version.String())
@@ -125,21 +121,21 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 
 		// Enqueue dependencies and peer dependencies for metadata retrieval.
 		for _, dep := range pkg.Dependencies {
-			if f.localNpmState.GetState(dep) == entities.NotStartedState {
-				f.localNpmState.SetState(dep, entities.AnalysingState, nil)
+			if !f.localNpmState.IsAnalysisStarted(dep) {
+				f.localNpmState.SetState(dep, entities.AnalysingState)
 				analyzeChan <- entities.NewRetrievePackage(dep)
 			}
 		}
 		for _, dep := range pkg.PeerDeps {
-			if f.localNpmState.GetState(dep) == entities.NotStartedState {
-				f.localNpmState.SetState(dep, entities.AnalysingState, nil)
+			if !f.localNpmState.IsAnalysisStarted(dep) {
+				f.localNpmState.SetState(dep, entities.AnalysingState)
 				analyzeChan <- entities.NewRetrievePackage(dep)
 			}
 		}
 	}
 
-	f.logger.Debug("[meta_#%d] Processed package %s... %d versions to download (latest: %s)", workerID, pkg.Name, len(filteredPackages), highestVersion)
-	f.localNpmState.SetState(pkg.Name, entities.AnalysedState, &highestVersion)
+	f.logger.Debug("[meta_#%d] Processed package %s... %d versions to download", workerID, pkg.Name, len(filteredPackages))
+	f.localNpmState.SetState(pkg.Name, entities.AnalysedState)
 	f.localNpmState.IncrementAnalysedCount()
 
 	return nil
@@ -147,14 +143,13 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 
 // filterPackages filtre pre-release versions and versions that are less than the last version.
 func (f *metadataWorkerPool) filterPackages(npmPackages []entities.NpmPackage, retrievePkg entities.RetrievePackage) []entities.NpmPackage {
-	lastVersion := f.localNpmState.GetLastVersion(retrievePkg.Name)
-
+	lastSyncDate := f.localNpmState.GetLastSync(retrievePkg.Name)
 	var filtered []entities.NpmPackage
 	for _, npmPkg := range npmPackages {
 		if npmPkg.Version.IsPreRelease() && !retrievePkg.IsMatchingPreRelease(npmPkg.Version.PreRelease) {
 			continue // Exclude pre-release versions
 		}
-		if npmPkg.Version.Compare(lastVersion) > 0 {
+		if npmPkg.ReleaseDate.After(lastSyncDate) {
 			filtered = append(filtered, npmPkg)
 		}
 	}
