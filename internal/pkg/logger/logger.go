@@ -78,7 +78,8 @@ type logger struct {
 
 // NewLogger creates and returns a new instance of logger.
 func NewLogger(level zapcore.Level, useColor bool) Logger {
-	encoderConfig := zapcore.EncoderConfig{
+	// Configuration for console output (with or without color depending on the flag)
+	consoleEncoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "time",  // Clé de la date
 		LevelKey:       "level", // Clé du niveau
 		MessageKey:     "msg",   // Clé du message
@@ -89,8 +90,12 @@ func NewLogger(level zapcore.Level, useColor bool) Logger {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
+	// Configuration for file output (always without color)
+	fileEncoderConfig := consoleEncoderConfig
+	fileEncoderConfig.EncodeLevel = customLevelEncoder(false)
+
 	consoleCore := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig),
+		zapcore.NewConsoleEncoder(consoleEncoderConfig),
 		zapcore.AddSync(zapcore.Lock(os.Stdout)),
 		level,
 	)
@@ -100,12 +105,12 @@ func NewLogger(level zapcore.Level, useColor bool) Logger {
 		panic(fmt.Sprintf("failed to open error.log file: %v", err))
 	}
 	fileCore := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig),
+		zapcore.NewConsoleEncoder(fileEncoderConfig),
 		zapcore.AddSync(errorFile),
 		zapcore.ErrorLevel,
 	)
 
-	// Combine cores
+	// Combine the two cores: console and file
 	core := zapcore.NewTee(consoleCore, fileCore)
 
 	zapLogger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
