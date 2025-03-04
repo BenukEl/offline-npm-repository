@@ -11,7 +11,7 @@ import (
 	"github.com/npmoffline/internal/repositories"
 )
 
-const maxRetries = 5
+const maxTarballRetries = 5
 
 // TarballWorkerPool defines the interface for tarball download workers.
 type TarballWorkerPool interface {
@@ -39,7 +39,7 @@ func NewTarballdWorkerPool(logger logger.Logger, localNpmRepo repositories.Local
 		remoteNpmRepo:      remoteNpmRepo,
 		localNpmState:      localNpmState,
 		backoffFactor:      time.Second,
-		maxDownloadRetries: maxRetries,
+		maxDownloadRetries: maxTarballRetries,
 	}
 }
 

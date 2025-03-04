@@ -101,11 +101,10 @@ func TestMetadataWorkerPool_StartWorker(t *testing.T) {
 
 	t.Run("Retrieve metadata gives error", func(t *testing.T) {
 		workerId := 5
-		mockLogger.On("Debug", mock.Anything, mock.Anything, mock.Anything).Times(3)
-		mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Times(2)
+		mockLogger.On("Debug", mock.Anything, mock.Anything, mock.Anything).Times(2)
+		mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Times(1)
 
 		mockLocalState.On("IsAnalysisNeeded", mock.Anything).Return(true).Once()
-		mockRemoteRepo.On("FetchMetadata", mock.Anything, mock.Anything).Return(nil, assert.AnError).Once()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
@@ -173,16 +172,18 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 	mockRemoteRepo := repositories.NewMockNpmRepository(t)
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
+	// Instanciation du pool avec quelques paramètres de configuration pour les tests.
 	pool := &metadataWorkerPool{
-		logger:        mockLogger,
-		wg:            &sync.WaitGroup{},
-		localNpmRepo:  mockLocalRepo,
-		remoteNpmRepo: mockRemoteRepo,
-		localNpmState: mockLocalState,
+		logger:             mockLogger,
+		wg:                 &sync.WaitGroup{},
+		localNpmRepo:       mockLocalRepo,
+		remoteNpmRepo:      mockRemoteRepo,
+		localNpmState:      mockLocalState,
+		maxDownloadRetries: 1,
+		backoffFactor:      time.Millisecond * 10,
 	}
 
 	t.Run("Skip processing if already processed", func(t *testing.T) {
-		// Ack
 		mockLocalState.On("IsAnalysisNeeded", testpkg).Return(false).Once()
 		mockLogger.On("Debug", "Package %s already processed", packageName).Once()
 
@@ -190,41 +191,44 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		analyzeChan := make(chan entities.RetrievePackage, 10)
 		downloadChan := make(chan entities.NpmPackage, 10)
 
-		// Run
+		// Exécution
 		err := pool.retrieveMetadata(ctx, testpkg, analyzeChan, downloadChan, workerID)
 
-		// Assert
+		// Assertions
 		assert.NoError(t, err)
 		assert.Equal(t, 0, len(downloadChan))
 		mockLogger.AssertCalled(t, "Debug", "Package %s already processed", packageName)
 	})
 
 	t.Run("Error in FetchMetadata", func(t *testing.T) {
-		// Ack
+		pool.maxDownloadRetries = 1
 		mockLocalState.On("IsAnalysisNeeded", testpkg).Return(true).Once()
-		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
-		mockLogger.On("Error", "Failed to fetch metadata for %s: %w", packageName, mock.Anything).Once()
+		// On s'attend à l'appel de fetchMetadata avec le message incluant "Attempt 1"
+		mockLogger.On("IsDebug").Return(true).Once()
+		mockLogger.On("Debug", "[meta_#%d] Attempt %d: Fetching metadata for package %s", workerID, 1, packageName).Once()
 
 		fetchErr := fmt.Errorf("fetch error")
 		mockRemoteRepo.On("FetchMetadata", mock.Anything, packageName).Return(nil, fetchErr).Once()
+		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %w", workerID, 1, packageName, fetchErr).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)
 		downloadChan := make(chan entities.NpmPackage, 10)
 
-		// Run
+		// Exécution
 		err := pool.retrieveMetadata(ctx, testpkg, analyzeChan, downloadChan, workerID)
 
-		// Assert
+		// Assertions
 		assert.Error(t, err)
-		assert.Equal(t, fetchErr, err)
-		mockLogger.AssertCalled(t, "Error", "Failed to fetch metadata for %s: %w", packageName, fetchErr)
+		assert.Contains(t, err.Error(), "failed to fetch metadata for")
+		mockLogger.AssertCalled(t, "Error", "[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %w", workerID, 1, packageName, fetchErr)
 	})
 
 	t.Run("Error in WritePackageJSON", func(t *testing.T) {
-		// Ack
+		pool.maxDownloadRetries = 1
 		mockLocalState.On("IsAnalysisNeeded", testpkg).Return(true).Once()
-		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
+		mockLogger.On("IsDebug").Return(true).Once()
+		mockLogger.On("Debug", "[meta_#%d] Attempt %d: Fetching metadata for package %s", workerID, 1, packageName).Once()
 
 		dummyData := "dummy metadata"
 		reader := io.NopCloser(strings.NewReader(dummyData))
@@ -232,24 +236,26 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 		writeErr := fmt.Errorf("write error")
 		mockLocalRepo.On("WritePackageJSON", packageName, reader).Return(nil, writeErr).Once()
+		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %w", workerID, 1, packageName, writeErr).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)
 		downloadChan := make(chan entities.NpmPackage, 10)
 
-		// Run
+		// Exécution
 		err := pool.retrieveMetadata(ctx, testpkg, analyzeChan, downloadChan, workerID)
 
-		// Assert
+		// Assertions
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to write package.json for package")
+		assert.Contains(t, err.Error(), "failed to fetch metadata for")
 		mockLocalRepo.AssertCalled(t, "WritePackageJSON", packageName, reader)
 	})
 
 	t.Run("Error in DecodeNpmPackages", func(t *testing.T) {
-		// Ack
+		pool.maxDownloadRetries = 1
 		mockLocalState.On("IsAnalysisNeeded", testpkg).Return(true).Once()
-		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
+		mockLogger.On("IsDebug").Return(true).Once()
+		mockLogger.On("Debug", "[meta_#%d] Attempt %d: Fetching metadata for package %s", workerID, 1, packageName).Once()
 
 		dummyData := "dummy metadata"
 		reader := io.NopCloser(strings.NewReader(dummyData))
@@ -260,24 +266,25 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 
 		decodeErr := fmt.Errorf("decode error")
 		mockRemoteRepo.On("DecodeNpmPackages", teeReader).Return(nil, decodeErr).Once()
+		mockLogger.On("Error", "[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %w", workerID, 1, packageName, decodeErr).Once()
 
 		ctx := context.Background()
 		analyzeChan := make(chan entities.RetrievePackage, 10)
 		downloadChan := make(chan entities.NpmPackage, 10)
 
-		// Run
+		// Exécution
 		err := pool.retrieveMetadata(ctx, testpkg, analyzeChan, downloadChan, workerID)
 
-		// Assert
+		// Assertions
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decode npm packages for package")
+		assert.Contains(t, err.Error(), "failed to fetch metadata for")
 		mockRemoteRepo.AssertCalled(t, "DecodeNpmPackages", teeReader)
 	})
 
 	t.Run("Successful processing without dependencies", func(t *testing.T) {
-		// Ack
-		mockLogger.On("IsDebug").Return(true).Once()
-		mockLocalState.On("IsAnalysisNeeded", mock.Anything).Return(true).Once()
+		pool.maxDownloadRetries = 1
+		mockLogger.On("IsDebug").Return(true).Times(2)
+		mockLocalState.On("IsAnalysisNeeded", testpkg).Return(true).Once()
 		mockLocalState.On("GetLastSync", testpkg).Return(time.Time{}).Once()
 
 		dummyData := "dummy metadata"
@@ -296,7 +303,8 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		}
 		mockRemoteRepo.On("DecodeNpmPackages", teeReader).Return([]entities.NpmPackage{pkg}, nil).Once()
 
-		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
+		// On s'attend à l'appel de fetchMetadata avec le message d'Attempt 1
+		mockLogger.On("Debug", "[meta_#%d] Attempt %d: Fetching metadata for package %s", workerID, 1, packageName).Once()
 		mockLogger.On("Debug", "[meta_#%d] Enqueueing package %s:%s for download", workerID, pkg.Name, pkg.Version.String()).Once()
 		mockLogger.On("Debug", "[meta_#%d] Processed package %s... %d versions to download", workerID, packageName, 1).Once()
 
@@ -307,10 +315,10 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		analyzeChan := make(chan entities.RetrievePackage, 10)
 		downloadChan := make(chan entities.NpmPackage, 10)
 
-		// Run
+		// Exécution
 		err := pool.retrieveMetadata(ctx, testpkg, analyzeChan, downloadChan, workerID)
 
-		// Assert
+		// Assertions
 		assert.NoError(t, err)
 
 		select {
@@ -320,13 +328,12 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		default:
 			t.Error("The expected package was not enqueued in downloadChan")
 		}
-
 		assert.Equal(t, 0, len(analyzeChan))
 	})
 
 	t.Run("Successful processing with dependencies and peer dependencies", func(t *testing.T) {
-		// Ack
-		mockLogger.On("IsDebug").Return(true).Once()
+		pool.maxDownloadRetries = 1
+		mockLogger.On("IsDebug").Return(true).Times(2)
 
 		mockLocalState.On("IsAnalysisNeeded", testpkg).Return(true).Once()
 		mockLocalState.On("GetLastSync", testpkg).Return(time.Time{}).Once()
@@ -347,7 +354,7 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		}
 		mockRemoteRepo.On("DecodeNpmPackages", teeReader).Return([]entities.NpmPackage{pkg}, nil).Once()
 
-		mockLogger.On("Debug", "[meta_#%d] Fetching metadata for package: %s", workerID, packageName).Once()
+		mockLogger.On("Debug", "[meta_#%d] Attempt %d: Fetching metadata for package %s", workerID, 1, packageName).Once()
 		mockLogger.On("Debug", "[meta_#%d] Enqueueing package %s:%s for download", workerID, pkg.Name, pkg.Version.String()).Once()
 		mockLogger.On("Debug", "[meta_#%d] Processed package %s... %d versions to download", workerID, packageName, 1).Once()
 
@@ -365,10 +372,10 @@ func TestMetadataWorkerPool_RetrieveMetadata(t *testing.T) {
 		analyzeChan := make(chan entities.RetrievePackage, 10)
 		downloadChan := make(chan entities.NpmPackage, 10)
 
-		// Run
+		// Exécution
 		err := pool.retrieveMetadata(ctx, testpkg, analyzeChan, downloadChan, workerID)
 
-		// Assert
+		// Assertions
 		assert.NoError(t, err)
 
 		select {

@@ -11,6 +11,8 @@ import (
 	"github.com/npmoffline/internal/repositories"
 )
 
+const maxMetadataRetries = 5
+
 // MetadataWorkerPool defines the interface for metadata retrieval workers.
 type MetadataWorkerPool interface {
 	StartWorker(ctx context.Context, analyzeChan chan entities.RetrievePackage, downloadChan chan entities.NpmPackage, workerID int, inactivityTime time.Duration)
@@ -19,21 +21,25 @@ type MetadataWorkerPool interface {
 
 // metadataWorkerPool is the concrete implementation of MetadataWorker.
 type metadataWorkerPool struct {
-	logger        logger.Logger
-	wg            *sync.WaitGroup
-	localNpmRepo  repositories.LocalNpmRepository
-	remoteNpmRepo repositories.NpmRepository
-	localNpmState entities.LocalNpmState
+	logger             logger.Logger
+	wg                 *sync.WaitGroup
+	localNpmRepo       repositories.LocalNpmRepository
+	remoteNpmRepo      repositories.NpmRepository
+	localNpmState      entities.LocalNpmState
+	backoffFactor      time.Duration
+	maxDownloadRetries int
 }
 
 // NewMetadataWorkerPool creates a new instance of MetadataWorker.
 func NewMetadataWorkerPool(logger logger.Logger, localNpmRepo repositories.LocalNpmRepository, remoteNpmRepo repositories.NpmRepository, localNpmState entities.LocalNpmState) MetadataWorkerPool {
 	return &metadataWorkerPool{
-		logger:        logger,
-		wg:            &sync.WaitGroup{},
-		localNpmRepo:  localNpmRepo,
-		remoteNpmRepo: remoteNpmRepo,
-		localNpmState: localNpmState,
+		logger:             logger,
+		wg:                 &sync.WaitGroup{},
+		localNpmRepo:       localNpmRepo,
+		remoteNpmRepo:      remoteNpmRepo,
+		localNpmState:      localNpmState,
+		backoffFactor:      time.Second,
+		maxDownloadRetries: maxMetadataRetries,
 	}
 }
 
@@ -90,23 +96,9 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 		return nil
 	}
 
-	f.logger.Debug("[meta_#%d] Fetching metadata for package: %s", workerID, pkg.Name)
-	reader, err := f.remoteNpmRepo.FetchMetadata(ctx, pkg.Name)
+	packages, err := f.fetchMetadata(ctx, pkg, workerID)
 	if err != nil {
-		f.logger.Error("Failed to fetch metadata for %s: %w", pkg.Name, err)
 		return err
-	}
-	defer reader.Close()
-
-	teeReader, err := f.localNpmRepo.WritePackageJSON(pkg.Name, reader)
-	if err != nil {
-		return fmt.Errorf("failed to write package.json for package %s. Err: %w", pkg.Name, err)
-	}
-	defer teeReader.Close()
-
-	packages, err := f.remoteNpmRepo.DecodeNpmPackages(teeReader)
-	if err != nil {
-		return fmt.Errorf("failed to decode npm packages for package %s. Err: %w", pkg.Name, err)
 	}
 
 	filteredPackages := f.filterPackages(packages, pkg)
@@ -141,6 +133,48 @@ func (f *metadataWorkerPool) retrieveMetadata(ctx context.Context, pkg entities.
 	f.localNpmState.IncrementAnalysedCount()
 
 	return nil
+}
+
+// fetchMetadata retrieves the metadata for the given package.
+func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.RetrievePackage, workerID int) ([]entities.NpmPackage, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= f.maxDownloadRetries; attempt++ {
+		if f.logger.IsDebug() {
+			f.logger.Debug("[meta_#%d] Attempt %d: Fetching metadata for package %s", workerID, attempt, pkg.Name)
+		}
+
+		reader, err := f.remoteNpmRepo.FetchMetadata(ctx, pkg.Name)
+		if err != nil {
+			f.logger.Error("[meta_#%d] Attempt %d: Failed to fetch metadata for %s. Err: %w", workerID, attempt, pkg.Name, err)
+			lastErr = err
+			// Progressive delay before the next
+			time.Sleep(time.Duration(attempt) * f.backoffFactor)
+			continue
+		}
+
+		teeReader, err := f.localNpmRepo.WritePackageJSON(pkg.Name, reader)
+		reader.Close()
+		if err != nil {
+			f.logger.Error("[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %w", workerID, attempt, pkg.Name, err)
+			lastErr = err
+			time.Sleep(time.Duration(attempt) * f.backoffFactor)
+			continue
+		}
+
+		packages, err := f.remoteNpmRepo.DecodeNpmPackages(teeReader)
+		teeReader.Close()
+		if err != nil {
+			f.logger.Error("[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %w", workerID, attempt, pkg.Name, err)
+			lastErr = err
+			time.Sleep(time.Duration(attempt) * f.backoffFactor)
+			continue
+		}
+
+		return packages, nil
+	}
+
+	return nil, fmt.Errorf("failed to fetch metadata for %s. Err: %w", pkg.Name, lastErr)
 }
 
 // filterPackages filtre pre-release versions and versions that are less than the last version.

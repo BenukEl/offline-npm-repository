@@ -24,11 +24,13 @@ func TestTarballWorkerPool_StartWorker(t *testing.T) {
 	mockLocalState := entities.NewMockLocalNpmState(t)
 
 	pool := &tarballWorkerPool{
-		logger:        mockLogger,
-		wg:            &sync.WaitGroup{},
-		localNpmRepo:  mockLocalRepo,
-		remoteNpmRepo: mockRemoteRepo,
-		localNpmState: mockLocalState,
+		logger:             mockLogger,
+		wg:                 &sync.WaitGroup{},
+		localNpmRepo:       mockLocalRepo,
+		remoteNpmRepo:      mockRemoteRepo,
+		localNpmState:      mockLocalState,
+		maxDownloadRetries: 1,
+		backoffFactor:      time.Millisecond * 10,
 	}
 
 	t.Run("Worker terminates when context is cancelled", func(t *testing.T) {
@@ -102,12 +104,11 @@ func TestTarballWorkerPool_StartWorker(t *testing.T) {
 
 		mockLogger.On("IsDebug").Return(true).Once()
 		mockLogger.On("Debug", "[dl_#%d] Worker started", workerID).Once()
-		mockLogger.On("Debug", "[dl_#%d] Downloading tarball for package %s:%s", workerID, pkg.Name, pkg.Version.String()).Once()
+		mockLogger.On("Debug", "[dl_#%d] Attempt %d: Downloading tarball for package %s:%s", workerID, 1, pkg.Name, pkg.Version.String()).Once()
 		mockLogger.On("Debug", "[dl_#%d] Worker stopped due to inactivity", workerID)
-		downloadErr := fmt.Errorf("download error")
-		mockLogger.On("Error", "[dl_#%d] Failed to download tarball for %s:%s. Err:%w", workerID, pkg.Name, pkg.Version.String(), downloadErr).Once()
-		mockLogger.On("Error", "[dl_#%d] Failed to download tarball for %s: %w", workerID, pkg.Name, downloadErr).Once()
-		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, pkg.Url).Return(nil, downloadErr).Once()
+		mockLogger.On("Error", "[dl_#%d] Attempt %d: Failed to download tarball for %s:%s. Err:%w", workerID, 1, pkg.Name, mock.Anything, mock.Anything).Once()
+		mockLogger.On("Error", "[dl_#%d] Failed to download tarball for %s: %w", workerID, pkg.Name, mock.Anything).Once()
+		mockRemoteRepo.On("DownloadTarballStream", mock.Anything, pkg.Url).Return(nil, assert.AnError).Once()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
