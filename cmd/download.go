@@ -30,6 +30,7 @@ var (
 	downloadWorkers int
 
 	updateLocalRepository bool
+	verbose               bool
 )
 
 // downloadCmd represents the "download" subcommand
@@ -88,7 +89,11 @@ You can combine these flags and arguments in a single command.`,
 		// 3) Instantiate your service(s) and call the downloader
 		//    Below is pseudo-code; adapt to your real code.
 		//
-		log := logger.NewLogger(zapcore.InfoLevel, true)
+		logLevel := zapcore.InfoLevel
+		if verbose {
+			logLevel = zapcore.DebugLevel
+		}
+		log := logger.NewLogger(logLevel, true)
 		httpCli := httpclient.NewHttpClient(http.DefaultClient)
 		fs := filesystem.NewOsFileSystem()
 		npmRepo := repositories.NewNpmRepository("https://registry.npmjs.org", httpCli, log)
