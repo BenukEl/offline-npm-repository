@@ -154,8 +154,8 @@ func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.Ret
 		}
 
 		teeReader, err := f.localNpmRepo.WritePackageJSON(pkg.Name, reader)
-		reader.Close()
 		if err != nil {
+			reader.Close()
 			f.logger.Error("[meta_#%d] Attempt %d: Failed to write package.json for %s. Err: %v", workerID, attempt, pkg.Name, err)
 			lastErr = err
 			time.Sleep(time.Duration(attempt) * f.backoffFactor)
@@ -164,6 +164,7 @@ func (f *metadataWorkerPool) fetchMetadata(ctx context.Context, pkg entities.Ret
 
 		packages, err := f.remoteNpmRepo.DecodeNpmPackages(teeReader)
 		teeReader.Close()
+		reader.Close()
 		if err != nil {
 			f.logger.Error("[meta_#%d] Attempt %d: Failed to decode npm packages for %s. Err: %v", workerID, attempt, pkg.Name, err)
 			lastErr = err
